@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2024-11-28
+
+### Changed
+- **Binary Configuration**: Configure `http_purge_server` example as main binary
+  - Main binary now uses `examples/http_purge_server.rs` as source
+  - Provides complete HTTP PURGE server functionality out of the box
+  - Includes two-tier cache, PURGE support, and monitoring endpoints
+  - Simplifies deployment and RPM packaging
+- Move `tempfile` from dev-dependencies to dependencies (required by main binary)
+- Add `BUILD_BINARY.md` documentation explaining binary configuration
+
+### Fixed
+- Binary packaging now uses the correct full-featured server implementation
+
 ## [0.2.0] - 2024-11-28
 
 ### Added
