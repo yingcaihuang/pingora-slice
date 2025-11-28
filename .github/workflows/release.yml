@@ -73,7 +73,8 @@ jobs:
           
       - name: Create RPM spec file
         run: |
-          cat > ~/rpmbuild/SPECS/pingora-slice.spec << 'EOF'
+          CHANGELOG_DATE=$(date "+%a %b %d %Y")
+          cat > ~/rpmbuild/SPECS/pingora-slice.spec << EOF
           Name:           pingora-slice
           Version:        ${{ steps.get_version.outputs.VERSION }}
           Release:        1%{?dist}
@@ -107,10 +108,10 @@ jobs:
           mkdir -p %{buildroot}%{_unitdir}
           
           # Install binary
-          install -m 755 $GITHUB_WORKSPACE/target/release/pingora-slice %{buildroot}%{_bindir}/pingora-slice
+          install -m 755 \$GITHUB_WORKSPACE/target/release/pingora-slice %{buildroot}%{_bindir}/pingora-slice
           
           # Install config
-          install -m 644 $GITHUB_WORKSPACE/examples/pingora_slice.yaml %{buildroot}%{_sysconfdir}/pingora-slice/pingora_slice.yaml
+          install -m 644 \$GITHUB_WORKSPACE/examples/pingora_slice.yaml %{buildroot}%{_sysconfdir}/pingora-slice/pingora_slice.yaml
           
           # Install systemd service
           cat > %{buildroot}%{_unitdir}/pingora-slice.service << 'SERVICEEOF'
@@ -160,7 +161,7 @@ jobs:
           %attr(0755,pingora-slice,pingora-slice) %dir %{_var}/log/pingora-slice
           
           %changelog
-          * $(date "+%a %b %d %Y") GitHub Actions <noreply@github.com> - ${{ steps.get_version.outputs.VERSION }}-1
+          * \${CHANGELOG_DATE} GitHub Actions <noreply@github.com> - ${{ steps.get_version.outputs.VERSION }}-1
           - Automated build from GitHub Actions
           EOF
           
