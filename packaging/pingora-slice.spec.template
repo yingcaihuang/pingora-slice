@@ -34,9 +34,9 @@ Features:
 rm -rf %{buildroot}
 mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}%{_sysconfdir}/pingora-slice
-mkdir -p %{buildroot}%{_var}/cache/pingora-slice
-mkdir -p %{buildroot}%{_var}/log/pingora-slice
-mkdir -p %{buildroot}%{_unitdir}
+mkdir -p %{buildroot}/var/cache/pingora-slice
+mkdir -p %{buildroot}/var/log/pingora-slice
+mkdir -p %{buildroot}/usr/lib/systemd/system
 mkdir -p %{buildroot}%{_docdir}/%{name}
 
 # Install binary
@@ -50,7 +50,7 @@ install -m 644 __README_PATH__ %{buildroot}%{_docdir}/%{name}/README.md
 install -m 644 __README_ZH_PATH__ %{buildroot}%{_docdir}/%{name}/README_zh.md
 
 # Install systemd service
-cat > %{buildroot}%{_unitdir}/pingora-slice.service << 'EOF'
+cat > %{buildroot}/usr/lib/systemd/system/pingora-slice.service << 'EOF'
 [Unit]
 Description=Pingora Slice Proxy Server
 After=network.target
@@ -112,9 +112,9 @@ exit 0
 %files
 %{_bindir}/pingora-slice
 %config(noreplace) %{_sysconfdir}/pingora-slice/pingora_slice.yaml
-%{_unitdir}/pingora-slice.service
-%attr(0755,pingora-slice,pingora-slice) %dir %{_var}/cache/pingora-slice
-%attr(0755,pingora-slice,pingora-slice) %dir %{_var}/log/pingora-slice
+/usr/lib/systemd/system/pingora-slice.service
+%attr(0755,pingora-slice,pingora-slice) %dir /var/cache/pingora-slice
+%attr(0755,pingora-slice,pingora-slice) %dir /var/log/pingora-slice
 %doc %{_docdir}/%{name}/README.md
 %doc %{_docdir}/%{name}/README_zh.md
 
