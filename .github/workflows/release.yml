@@ -1,4 +1,4 @@
-name: Build and Release RPM
+name: Build and Release Packages
 
 on:
   push:
@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 0.1.0)'
+        description: 'Version to release (e.g., 0.2.1)'
         required: true
-        default: '0.1.0'
+        default: '0.2.1'
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,7 +34,6 @@ jobs:
     steps:
       - name: Fix CentOS 8 repositories (if needed)
         run: |
-          # CentOS 8 已经 EOL，需要切换到 vault 镜像
           if [ -f /etc/centos-release ] && grep -q "CentOS Stream release 8" /etc/centos-release; then
             sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-*.repo
             sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
@@ -73,99 +72,14 @@ jobs:
           
       - name: Create RPM spec file
         run: |
-          cat > ~/rpmbuild/SPECS/pingora-slice.spec << 'EOF'
-          Name:           pingora-slice
-          Version:        ${{ steps.get_version.outputs.VERSION }}
-          Release:        1%{?dist}
-          Summary:        Pingora Slice Module - Automatic file slicing proxy for large files
-          
-          License:        MIT
-          URL:            https://github.com/${{ github.repository }}
-          Source0:        %{name}-%{version}.tar.gz
-          
-          BuildRequires:  gcc
-          BuildRequires:  openssl-devel
-          Requires:       openssl-libs
-          
-          %description
-          Pingora Slice Module is a high-performance proxy module for Pingora that automatically
-          splits large file requests into multiple Range requests, improving cache efficiency
-          and reducing origin server load.
-          
-          %prep
-          # No prep needed - binary already built
-          
-          %build
-          # Build done in GitHub Actions
-          
-          %install
-          rm -rf %{buildroot}
-          mkdir -p %{buildroot}%{_bindir}
-          mkdir -p %{buildroot}%{_sysconfdir}/pingora-slice
-          mkdir -p %{buildroot}%{_var}/cache/pingora-slice
-          mkdir -p %{buildroot}%{_var}/log/pingora-slice
-          mkdir -p %{buildroot}/usr/lib/systemd/system
-          
-          # Install binary
-          install -m 755 $GITHUB_WORKSPACE/target/release/pingora-slice %{buildroot}%{_bindir}/pingora-slice
-          
-          # Install config
-          install -m 644 $GITHUB_WORKSPACE/examples/pingora_slice.yaml %{buildroot}%{_sysconfdir}/pingora-slice/pingora_slice.yaml
-          
-          # Install systemd service
-          cat > %{buildroot}/usr/lib/systemd/system/pingora-slice.service << 'SERVICEEOF'
-          [Unit]
-          Description=Pingora Slice Proxy Server
-          After=network.target
-          
-          [Service]
-          Type=simple
-          User=pingora-slice
-          Group=pingora-slice
-          ExecStart=/usr/bin/pingora-slice /etc/pingora-slice/pingora_slice.yaml
-          Restart=on-failure
-          RestartSec=5s
-          
-          # Security settings
-          NoNewPrivileges=true
-          PrivateTmp=true
-          ProtectSystem=strict
-          ProtectHome=true
-          ReadWritePaths=/var/cache/pingora-slice /var/log/pingora-slice
-          
-          [Install]
-          WantedBy=multi-user.target
-          SERVICEEOF
-          
-          %pre
-          getent group pingora-slice >/dev/null || groupadd -r pingora-slice
-          getent passwd pingora-slice >/dev/null || \
-              useradd -r -g pingora-slice -d /var/cache/pingora-slice -s /sbin/nologin \
-              -c "Pingora Slice service user" pingora-slice
-          
-          %post
-          %systemd_post pingora-slice.service
-          
-          %preun
-          %systemd_preun pingora-slice.service
-          
-          %postun
-          %systemd_postun_with_restart pingora-slice.service
-          
-          %files
-          %{_bindir}/pingora-slice
-          %config(noreplace) %{_sysconfdir}/pingora-slice/pingora_slice.yaml
-          /usr/lib/systemd/system/pingora-slice.service
-          %attr(0755,pingora-slice,pingora-slice) %dir %{_var}/cache/pingora-slice
-          %attr(0755,pingora-slice,pingora-slice) %dir %{_var}/log/pingora-slice
-          
-          %changelog
-          * __DATE__ GitHub Actions <noreply@github.com> - ${{ steps.get_version.outputs.VERSION }}-1
-          - Automated build from GitHub Actions
-          EOF
-          
-          # Replace __DATE__ placeholder with actual date
-          sed -i "s/__DATE__/$(date '+%a %b %d %Y')/g" ~/rpmbuild/SPECS/pingora-slice.spec
+          cp packaging/pingora-slice.spec.template ~/rpmbuild/SPECS/pingora-slice.spec
+          sed -i "s/__VERSION__/${{ steps.get_version.outputs.VERSION }}/g" ~/rpmbuild/SPECS/pingora-slice.spec
+          sed -i "s|__GITHUB_REPO__|${{ github.repository }}|g" ~/rpmbuild/SPECS/pingora-slice.spec
+          sed -i "s|__BINARY_PATH__|$GITHUB_WORKSPACE/target/release/pingora-slice|g" ~/rpmbuild/SPECS/pingora-slice.spec
+          sed -i "s|__CONFIG_PATH__|$GITHUB_WORKSPACE/examples/pingora_slice.yaml|g" ~/rpmbuild/SPECS/pingora-slice.spec
+          sed -i "s|__README_PATH__|$GITHUB_WORKSPACE/README.md|g" ~/rpmbuild/SPECS/pingora-slice.spec
+          sed -i "s|__README_ZH_PATH__|$GITHUB_WORKSPACE/README_zh.md|g" ~/rpmbuild/SPECS/pingora-slice.spec
+          sed -i "s|__DATE__|$(date '+%a %b %d %Y')|g" ~/rpmbuild/SPECS/pingora-slice.spec
           
       - name: Build RPM
         run: |
@@ -185,9 +99,318 @@ jobs:
           path: ${{ steps.find_rpm.outputs.rpm_file }}
           retention-days: 5
 
+  build-deb:
+    name: Build DEB for ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-20.04
+            codename: focal
+          - os: ubuntu-22.04
+            codename: jammy
+          - os: debian-11
+            codename: bullseye
+          - os: debian-12
+            codename: bookworm
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev pkg-config dpkg-dev debhelper
+          
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Build binary
+        run: |
+          cargo build --release
+          strip target/release/pingora-slice
+          
+      - name: Create DEB package structure
+        run: |
+          mkdir -p debian-package/DEBIAN
+          mkdir -p debian-package/usr/bin
+          mkdir -p debian-package/etc/pingora-slice
+          mkdir -p debian-package/var/cache/pingora-slice
+          mkdir -p debian-package/var/log/pingora-slice
+          mkdir -p debian-package/lib/systemd/system
+          mkdir -p debian-package/usr/share/doc/pingora-slice
+          
+      - name: Copy files
+        run: |
+          cp target/release/pingora-slice debian-package/usr/bin/
+          cp examples/pingora_slice.yaml debian-package/etc/pingora-slice/
+          cp README.md debian-package/usr/share/doc/pingora-slice/
+          cp README_zh.md debian-package/usr/share/doc/pingora-slice/
+          
+      - name: Create systemd service
+        run: |
+          cat > debian-package/lib/systemd/system/pingora-slice.service << 'EOF'
+          [Unit]
+          Description=Pingora Slice Proxy Server
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=pingora-slice
+          Group=pingora-slice
+          ExecStart=/usr/bin/pingora-slice /etc/pingora-slice/pingora_slice.yaml
+          Restart=on-failure
+          RestartSec=5s
+          
+          # Security settings
+          NoNewPrivileges=true
+          PrivateTmp=true
+          ProtectSystem=strict
+          ProtectHome=true
+          ReadWritePaths=/var/cache/pingora-slice /var/log/pingora-slice
+          
+          # Resource limits
+          LimitNOFILE=65536
+          LimitNPROC=4096
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+      - name: Create control file
+        run: |
+          cat > debian-package/DEBIAN/control << EOF
+          Package: pingora-slice
+          Version: ${{ steps.get_version.outputs.VERSION }}
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Pingora Slice Team <noreply@github.com>
+          Depends: libc6, libssl3 | libssl1.1
+          Description: Pingora Slice Module - Automatic file slicing proxy
+           Pingora Slice Module is a high-performance proxy module for Pingora
+           that automatically splits large file requests into multiple Range
+           requests, improving cache efficiency and reducing origin server load.
+           .
+           Features:
+            - Automatic file slicing for large files
+            - Concurrent subrequests for faster downloads
+            - Intelligent cache management
+            - Support for client Range requests
+            - Complete error handling and retry mechanism
+            - Prometheus metrics monitoring
+          EOF
+          
+      - name: Create postinst script
+        run: |
+          cat > debian-package/DEBIAN/postinst << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          # Create user and group
+          if ! getent group pingora-slice >/dev/null 2>&1; then
+              addgroup --system pingora-slice
+          fi
+          
+          if ! getent passwd pingora-slice >/dev/null 2>&1; then
+              adduser --system --ingroup pingora-slice --home /var/cache/pingora-slice \
+                      --no-create-home --shell /usr/sbin/nologin \
+                      --gecos "Pingora Slice service user" pingora-slice
+          fi
+          
+          # Set permissions
+          chown -R pingora-slice:pingora-slice /var/cache/pingora-slice 2>/dev/null || true
+          chown -R pingora-slice:pingora-slice /var/log/pingora-slice 2>/dev/null || true
+          
+          # Reload systemd
+          if [ -d /run/systemd/system ]; then
+              systemctl daemon-reload >/dev/null 2>&1 || true
+          fi
+          
+          echo "Pingora Slice has been installed successfully!"
+          echo "Edit /etc/pingora-slice/pingora_slice.yaml to configure"
+          echo "Start with: systemctl start pingora-slice"
+          
+          exit 0
+          EOF
+          chmod 755 debian-package/DEBIAN/postinst
+          
+      - name: Create prerm script
+        run: |
+          cat > debian-package/DEBIAN/prerm << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          if [ -d /run/systemd/system ]; then
+              systemctl stop pingora-slice >/dev/null 2>&1 || true
+              systemctl disable pingora-slice >/dev/null 2>&1 || true
+          fi
+          
+          exit 0
+          EOF
+          chmod 755 debian-package/DEBIAN/prerm
+          
+      - name: Create postrm script
+        run: |
+          cat > debian-package/DEBIAN/postrm << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          if [ "$1" = "purge" ]; then
+              # Remove user and group
+              deluser pingora-slice >/dev/null 2>&1 || true
+              delgroup pingora-slice >/dev/null 2>&1 || true
+              
+              # Remove data directories
+              rm -rf /var/cache/pingora-slice
+              rm -rf /var/log/pingora-slice
+          fi
+          
+          if [ -d /run/systemd/system ]; then
+              systemctl daemon-reload >/dev/null 2>&1 || true
+          fi
+          
+          exit 0
+          EOF
+          chmod 755 debian-package/DEBIAN/postrm
+          
+      - name: Build DEB package
+        run: |
+          dpkg-deb --build debian-package pingora-slice_${{ steps.get_version.outputs.VERSION }}_${{ matrix.codename }}_amd64.deb
+          
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pingora-slice-${{ matrix.codename }}.deb
+          path: pingora-slice_${{ steps.get_version.outputs.VERSION }}_${{ matrix.codename }}_amd64.deb
+          retention-days: 5
+
+  build-macos:
+    name: Build macOS Package
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Build binary
+        run: |
+          cargo build --release
+          strip target/release/pingora-slice
+          
+      - name: Create package structure
+        run: |
+          mkdir -p macos-package/usr/local/bin
+          mkdir -p macos-package/usr/local/etc/pingora-slice
+          mkdir -p macos-package/Library/LaunchDaemons
+          
+      - name: Copy files
+        run: |
+          cp target/release/pingora-slice macos-package/usr/local/bin/
+          cp examples/pingora_slice.yaml macos-package/usr/local/etc/pingora-slice/
+          
+      - name: Create LaunchDaemon plist
+        run: |
+          cat > macos-package/Library/LaunchDaemons/com.pingora.slice.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>Label</key>
+              <string>com.pingora.slice</string>
+              <key>ProgramArguments</key>
+              <array>
+                  <string>/usr/local/bin/pingora-slice</string>
+                  <string>/usr/local/etc/pingora-slice/pingora_slice.yaml</string>
+              </array>
+              <key>RunAtLoad</key>
+              <false/>
+              <key>KeepAlive</key>
+              <true/>
+              <key>StandardOutPath</key>
+              <string>/usr/local/var/log/pingora-slice.log</string>
+              <key>StandardErrorPath</key>
+              <string>/usr/local/var/log/pingora-slice.error.log</string>
+          </dict>
+          </plist>
+          EOF
+          
+      - name: Create tarball
+        run: |
+          cd macos-package
+          tar czf ../pingora-slice-${{ steps.get_version.outputs.VERSION }}-macos-$(uname -m).tar.gz *
+          cd ..
+          
+      - name: Create installation script
+        run: |
+          cat > install-macos.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          echo "Installing Pingora Slice..."
+          
+          # Extract files
+          tar xzf pingora-slice-*.tar.gz -C /
+          
+          # Set permissions
+          chmod +x /usr/local/bin/pingora-slice
+          chmod 644 /Library/LaunchDaemons/com.pingora.slice.plist
+          
+          # Create log directory
+          mkdir -p /usr/local/var/log
+          
+          echo "Installation complete!"
+          echo ""
+          echo "To start Pingora Slice:"
+          echo "  sudo launchctl load /Library/LaunchDaemons/com.pingora.slice.plist"
+          echo ""
+          echo "To stop Pingora Slice:"
+          echo "  sudo launchctl unload /Library/LaunchDaemons/com.pingora.slice.plist"
+          echo ""
+          echo "Configuration file: /usr/local/etc/pingora-slice/pingora_slice.yaml"
+          EOF
+          chmod +x install-macos.sh
+          
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pingora-slice-macos
+          path: |
+            pingora-slice-${{ steps.get_version.outputs.VERSION }}-macos-*.tar.gz
+            install-macos.sh
+          retention-days: 5
+
   create-release:
     name: Create GitHub Release
-    needs: build-rpm
+    needs: [build-rpm, build-deb, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -226,70 +449,130 @@ jobs:
           body: |
             ## Pingora Slice v${{ steps.get_version.outputs.VERSION }}
             
-            ### 安装说明
+            ### 📦 Installation
             
-            #### CentOS 8 / Rocky Linux 8 / AlmaLinux 8
+            #### RPM (CentOS/Rocky/AlmaLinux)
+            
+            **CentOS 8 / Rocky Linux 8 / AlmaLinux 8:**
             ```bash
             sudo dnf install -y ./pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el8.x86_64.rpm
             ```
             
-            #### CentOS 9 / Rocky Linux 9 / AlmaLinux 9
+            **CentOS 9 / Rocky Linux 9 / AlmaLinux 9:**
             ```bash
             sudo dnf install -y ./pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el9.x86_64.rpm
             ```
             
-            ### 配置和启动
+            #### DEB (Ubuntu/Debian)
             
-            1. 编辑配置文件：
+            **Ubuntu 20.04 (Focal):**
             ```bash
-            sudo vi /etc/pingora-slice/pingora_slice.yaml
+            sudo dpkg -i pingora-slice_${{ steps.get_version.outputs.VERSION }}_focal_amd64.deb
+            sudo apt-get install -f
             ```
             
-            2. 启动服务：
+            **Ubuntu 22.04 (Jammy):**
             ```bash
+            sudo dpkg -i pingora-slice_${{ steps.get_version.outputs.VERSION }}_jammy_amd64.deb
+            sudo apt-get install -f
+            ```
+            
+            **Debian 11 (Bullseye):**
+            ```bash
+            sudo dpkg -i pingora-slice_${{ steps.get_version.outputs.VERSION }}_bullseye_amd64.deb
+            sudo apt-get install -f
+            ```
+            
+            **Debian 12 (Bookworm):**
+            ```bash
+            sudo dpkg -i pingora-slice_${{ steps.get_version.outputs.VERSION }}_bookworm_amd64.deb
+            sudo apt-get install -f
+            ```
+            
+            #### macOS
+            
+            ```bash
+            tar xzf pingora-slice-${{ steps.get_version.outputs.VERSION }}-macos-*.tar.gz
+            sudo bash install-macos.sh
+            ```
+            
+            ### 🚀 Quick Start
+            
+            **Linux (systemd):**
+            ```bash
+            # Edit configuration
+            sudo vi /etc/pingora-slice/pingora_slice.yaml
+            
+            # Start service
             sudo systemctl start pingora-slice
             sudo systemctl enable pingora-slice
-            ```
             
-            3. 查看状态：
-            ```bash
+            # Check status
             sudo systemctl status pingora-slice
             ```
             
-            ### 功能特性
+            **macOS:**
+            ```bash
+            # Edit configuration
+            sudo vi /usr/local/etc/pingora-slice/pingora_slice.yaml
             
-            - ✅ 自动分片回源，提高大文件缓存效率
-            - ✅ 并发子请求，加速文件传输
-            - ✅ 智能缓存管理，减少源站压力
-            - ✅ 支持客户端 Range 请求
-            - ✅ 完整的错误处理和重试机制
-            - ✅ Prometheus 指标监控
+            # Start service
+            sudo launchctl load /Library/LaunchDaemons/com.pingora.slice.plist
             
-            ### 文档
+            # Check logs
+            tail -f /usr/local/var/log/pingora-slice.log
+            ```
+            
+            ### ✨ Features
+            
+            - ✅ Two-tier cache system (L1 memory + L2 disk)
+            - ✅ HTTP PURGE support for cache invalidation
+            - ✅ Automatic file slicing for large files
+            - ✅ Concurrent subrequests for faster downloads
+            - ✅ Intelligent cache management
+            - ✅ Support for client Range requests
+            - ✅ Complete error handling and retry mechanism
+            - ✅ Prometheus metrics monitoring
+            
+            ### 📚 Documentation
             
             - [README](https://github.com/${{ github.repository }}/blob/main/README.md)
             - [中文文档](https://github.com/${{ github.repository }}/blob/main/README_zh.md)
-            - [配置说明](https://github.com/${{ github.repository }}/blob/main/docs/CONFIGURATION.md)
-            - [部署指南](https://github.com/${{ github.repository }}/blob/main/docs/DEPLOYMENT.md)
+            - [Configuration Guide](https://github.com/${{ github.repository }}/blob/main/docs/CONFIGURATION.md)
+            - [Deployment Guide](https://github.com/${{ github.repository }}/blob/main/docs/DEPLOYMENT.md)
+            - [HTTP PURGE Reference](https://github.com/${{ github.repository }}/blob/main/docs/HTTP_PURGE_REFERENCE.md)
           draft: false
           prerelease: false
           
-      - name: Upload CentOS 8 RPM
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/pingora-slice-el8.rpm/pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el8.x86_64.rpm
-          asset_name: pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el8.x86_64.rpm
-          asset_content_type: application/x-rpm
+      - name: Upload RPM packages
+        run: |
+          for rpm in ./artifacts/pingora-slice-el*.rpm/*.rpm; do
+            filename=$(basename "$rpm")
+            curl -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/x-rpm" \
+              --data-binary @"$rpm" \
+              "${{ steps.create_release.outputs.upload_url }}?name=$filename"
+          done
           
-      - name: Upload CentOS 9 RPM
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/pingora-slice-el9.rpm/pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el9.x86_64.rpm
-          asset_name: pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el9.x86_64.rpm
-          asset_content_type: application/x-rpm
+      - name: Upload DEB packages
+        run: |
+          for deb in ./artifacts/pingora-slice-*.deb/*.deb; do
+            filename=$(basename "$deb")
+            curl -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/vnd.debian.binary-package" \
+              --data-binary @"$deb" \
+              "${{ steps.create_release.outputs.upload_url }}?name=$filename"
+          done
+          
+      - name: Upload macOS packages
+        run: |
+          for file in ./artifacts/pingora-slice-macos/*; do
+            filename=$(basename "$file")
+            curl -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/gzip" \
+              --data-binary @"$file" \
+              "${{ steps.create_release.outputs.upload_url }}?name=$filename"
+          done

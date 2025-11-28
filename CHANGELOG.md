@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2024-11-28
+
+### Fixed
+- **RPM Scriptlet Errors**: Fix installation and uninstallation script failures
+  - Add proper error handling in %pre, %post, and %postun scripts
+  - Use `|| true` to prevent non-fatal errors from failing installation
+  - Redirect error output with `2>/dev/null` to suppress unnecessary warnings
+  - Add `exit 0` to all scriptlets to ensure successful completion
+  - Fix chown failures when directories don't exist yet
+  - Fix user/group creation failures when they already exist
+- Add `RPM_SCRIPTLET_FIX.md` documentation explaining the fixes
+
+### Changed
+- Improve RPM packaging robustness and error handling
+
 ## [0.2.1] - 2024-11-28
 
 ### Changed

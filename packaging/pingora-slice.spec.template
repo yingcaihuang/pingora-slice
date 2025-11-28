@@ -79,20 +79,23 @@ WantedBy=multi-user.target
 EOF
 
 %pre
-getent group pingora-slice >/dev/null || groupadd -r pingora-slice
-getent passwd pingora-slice >/dev/null || \
+# Create group if it doesn't exist
+getent group pingora-slice >/dev/null 2>&1 || groupadd -r pingora-slice 2>/dev/null || true
+# Create user if it doesn't exist
+getent passwd pingora-slice >/dev/null 2>&1 || \
     useradd -r -g pingora-slice -d /var/cache/pingora-slice -s /sbin/nologin \
-    -c "Pingora Slice service user" pingora-slice
+    -c "Pingora Slice service user" pingora-slice 2>/dev/null || true
 exit 0
 
 %post
 %systemd_post pingora-slice.service
-# Set proper permissions
-chown -R pingora-slice:pingora-slice /var/cache/pingora-slice
-chown -R pingora-slice:pingora-slice /var/log/pingora-slice
+# Set proper permissions (ignore errors if directories don't exist yet)
+chown -R pingora-slice:pingora-slice /var/cache/pingora-slice 2>/dev/null || true
+chown -R pingora-slice:pingora-slice /var/log/pingora-slice 2>/dev/null || true
 echo "Pingora Slice has been installed successfully!"
 echo "Edit /etc/pingora-slice/pingora_slice.yaml to configure"
 echo "Start with: systemctl start pingora-slice"
+exit 0
 
 %preun
 %systemd_preun pingora-slice.service
@@ -104,6 +107,7 @@ if [ $1 -eq 0 ]; then
     userdel pingora-slice 2>/dev/null || true
     groupdel pingora-slice 2>/dev/null || true
 fi
+exit 0
 
 %files
 %{_bindir}/pingora-slice
