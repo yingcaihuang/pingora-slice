@@ -1,0 +1,154 @@
+# ============================================================================
+# Pingora Slice Module - Two-Tier Cache Configuration
+# ============================================================================
+#
+# This configuration demonstrates the new two-tier caching system:
+# - L1 Cache: In-memory for fast access (hot data)
+# - L2 Cache: Disk-based for persistence (cold data)
+#
+# Benefits:
+# - Fast access for frequently requested slices (L1)
+# - Persistence across restarts (L2)
+# - Automatic promotion of L2 hits to L1
+# - Reduced origin server load
+# ============================================================================
+
+# Slice size configuration
+slice_size: 1048576  # 1MB
+
+# Concurrency and retry settings
+max_concurrent_subrequests: 4
+max_retries: 3
+
+# URL patterns for slicing
+slice_patterns:
+  - "^/large-files/.*"
+  - "^/downloads/.*"
+
+# ============================================================================
+# Two-Tier Cache Configuration
+# ============================================================================
+
+# Enable caching
+enable_cache: true
+
+# Cache TTL (applies to both L1 and L2)
+cache_ttl: 3600  # 1 hour
+
+# L1 Cache (Memory) Configuration
+# --------------------------------
+# L1 cache size in bytes
+# This is the maximum amount of memory used for hot data
+#
+# Recommendations:
+# - Small deployments: 50-100MB
+# - Medium deployments: 100-500MB
+# - Large deployments: 500MB-2GB
+#
+# Note: Set this based on available RAM
+l1_cache_size_bytes: 104857600  # 100MB
+
+# L2 Cache (Disk) Configuration
+# ------------------------------
+# Enable L2 disk cache for persistence
+enable_l2_cache: true
+
+# L2 cache directory
+# This directory will store cached slices on disk
+#
+# Requirements:
+# - Must be writable by the pingora-slice user
+# - Should have sufficient disk space
+# - Preferably on fast storage (SSD)
+#
+# Default: /var/cache/pingora-slice
+l2_cache_dir: "/var/cache/pingora-slice"
+
+# ============================================================================
+# Upstream Configuration
+# ============================================================================
+upstream_address: "origin.example.com:80"
+
+# ============================================================================
+# Metrics Configuration
+# ============================================================================
+metrics_endpoint:
+  enabled: true
+  address: "127.0.0.1:9090"
+
+# ============================================================================
+# Cache Behavior
+# ============================================================================
+#
+# How the two-tier cache works:
+#
+# 1. READ PATH:
+#    Client Request → Check L1 (memory)
+#                  ↓ miss
+#                  → Check L2 (disk)
+#                  ↓ miss
+#                  → Fetch from origin
+#
+# 2. WRITE PATH:
+#    Data from origin → Store in L1 (sync)
+#                    → Store in L2 (async, non-blocking)
+#
+# 3. PROMOTION:
+#    L2 hit → Promote to L1 (for faster future access)
+#
+# 4. EVICTION:
+#    L1 full → Evict LRU items (still available in L2)
+#    L2 full → Managed by filesystem/disk space
+#
+# 5. PERSISTENCE:
+#    Restart → L1 empty, L2 intact
+#           → First requests hit L2, promoted to L1
+#
+# ============================================================================
+# Performance Tuning
+# ============================================================================
+#
+# For high-traffic scenarios:
+# ----------------------------
+# l1_cache_size_bytes: 1073741824  # 1GB
+# enable_l2_cache: true
+# l2_cache_dir: "/mnt/fast-ssd/pingora-cache"
+# cache_ttl: 7200  # 2 hours
+#
+# For memory-constrained environments:
+# -------------------------------------
+# l1_cache_size_bytes: 52428800  # 50MB
+# enable_l2_cache: true
+# l2_cache_dir: "/var/cache/pingora-slice"
+# cache_ttl: 3600  # 1 hour
+#
+# For maximum persistence (restart resilience):
+# ----------------------------------------------
+# l1_cache_size_bytes: 104857600  # 100MB
+# enable_l2_cache: true
+# l2_cache_dir: "/persistent/storage/pingora-cache"
+# cache_ttl: 86400  # 24 hours
+#
+# For memory-only (no persistence):
+# ----------------------------------
+# l1_cache_size_bytes: 524288000  # 500MB
+# enable_l2_cache: false
+# cache_ttl: 3600  # 1 hour
+#
+# ============================================================================
+# Monitoring
+# ============================================================================
+#
+# The metrics endpoint exposes cache statistics:
+#
+# - l1_entries: Number of items in L1 cache
+# - l1_bytes: Total bytes in L1 cache
+# - l1_hits: Number of L1 cache hits
+# - l2_hits: Number of L2 cache hits (promoted to L1)
+# - misses: Number of cache misses (fetched from origin)
+# - disk_writes: Number of successful L2 writes
+# - disk_errors: Number of failed L2 writes
+#
+# Access metrics at: http://127.0.0.1:9090/metrics
+#
+# ============================================================================

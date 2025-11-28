@@ -52,6 +52,10 @@ pub struct SliceConfig {
     /// Metrics endpoint configuration (optional)
     #[serde(default)]
     pub metrics_endpoint: Option<MetricsEndpointConfig>,
+
+    /// Purge configuration (optional)
+    #[serde(default)]
+    pub purge: Option<PurgeConfig>,
 }
 
 /// Configuration for the metrics HTTP endpoint
@@ -64,6 +68,22 @@ pub struct MetricsEndpointConfig {
     /// Address to bind the metrics endpoint to (default: "127.0.0.1:9090")
     #[serde(default = "default_metrics_address")]
     pub address: String,
+}
+
+/// Configuration for cache purge functionality
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PurgeConfig {
+    /// Whether to enable purge functionality (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Authentication token for purge requests (optional)
+    /// If not set, purge requests will not require authentication
+    pub auth_token: Option<String>,
+
+    /// Whether to enable Prometheus metrics for purge operations (default: true)
+    #[serde(default = "default_true")]
+    pub enable_metrics: bool,
 }
 
 impl Default for MetricsEndpointConfig {
@@ -121,8 +141,12 @@ impl Default for SliceConfig {
             slice_patterns: Vec::new(),
             enable_cache: default_true(),
             cache_ttl: default_cache_ttl(),
+            l1_cache_size_bytes: default_l1_cache_size(),
+            l2_cache_dir: default_l2_cache_dir(),
+            enable_l2_cache: default_true(),
             upstream_address: default_upstream(),
             metrics_endpoint: None,
+            purge: None,
         }
     }
 }

@@ -142,6 +142,69 @@ enable_cache: true
 cache_ttl: 3600
 
 # ----------------------------------------------------------------------------
+# Two-Tier Cache Configuration (L1 + L2)
+# ----------------------------------------------------------------------------
+# Pingora Slice supports a two-tier caching system:
+# - L1 Cache: In-memory cache for fast access to hot data
+# - L2 Cache: Disk-based cache for persistence and cold data
+#
+# Benefits:
+# - L1 provides microsecond-level access for frequently accessed slices
+# - L2 provides persistence across restarts and larger storage capacity
+# - Automatic promotion: L2 hits are promoted to L1 for faster future access
+# - LRU eviction: Least recently used items are evicted from L1 when full
+
+# L1 (Memory) cache size in bytes
+# This is the maximum amount of RAM used for caching hot slices.
+#
+# Default: 104857600 (100MB)
+#
+# Tuning guidelines:
+# - Small deployments: 50-100MB
+# - Medium deployments: 100-500MB
+# - Large deployments: 500MB-2GB
+# - Consider available RAM and concurrent request patterns
+#
+# Examples:
+#   l1_cache_size_bytes: 52428800    # 50MB
+#   l1_cache_size_bytes: 104857600   # 100MB (default)
+#   l1_cache_size_bytes: 524288000   # 500MB
+#   l1_cache_size_bytes: 1073741824  # 1GB
+l1_cache_size_bytes: 104857600
+
+# L2 (Disk) cache directory
+# Directory where cached slices are stored on disk for persistence.
+#
+# Default: "/var/cache/pingora-slice"
+#
+# Requirements:
+# - Directory must be writable by the pingora-slice process
+# - Sufficient disk space for cache_ttl * request_rate * slice_size
+# - Fast storage (SSD/NVMe) recommended for better performance
+#
+# Examples:
+#   l2_cache_dir: "/var/cache/pingora-slice"     # Default
+#   l2_cache_dir: "/mnt/ssd/pingora-cache"       # SSD mount
+#   l2_cache_dir: "/mnt/nvme/pingora-cache"      # NVMe for best performance
+l2_cache_dir: "/var/cache/pingora-slice"
+
+# Whether to enable L2 (disk) cache
+# When enabled, slices are persisted to disk and survive restarts.
+#
+# Default: true
+#
+# Enable L2 cache when:
+# - You want cache persistence across restarts
+# - You have sufficient disk space
+# - You want to reduce origin server load
+#
+# Disable L2 cache when:
+# - Disk space is very limited
+# - Content changes extremely frequently
+# - You prefer pure in-memory caching
+enable_l2_cache: true
+
+# ----------------------------------------------------------------------------
 # Upstream Server Configuration
 # ----------------------------------------------------------------------------
 # Upstream origin server address where the actual content is hosted.
@@ -226,6 +289,69 @@ metrics_endpoint:
 #   - "^/api/.*"                         # Only slice API endpoints
 # Or use an empty list to slice everything:
 # slice_patterns: []
+
+# ----------------------------------------------------------------------------
+# Cache Purge Configuration (Optional)
+# ----------------------------------------------------------------------------
+# Configuration for HTTP PURGE method support, allowing cache invalidation
+# via standard HTTP PURGE requests.
+#
+# If this section is omitted, PURGE functionality will be disabled.
+#
+# PURGE methods supported:
+# - PURGE /path/to/file - Purge specific URL
+# - PURGE /* with X-Purge-All: true - Purge all cache
+# - PURGE /path/* with X-Purge-Pattern: prefix - Purge by prefix
+purge:
+  # Whether to enable PURGE functionality
+  # Default: false
+  enabled: true
+  
+  # Authentication token for PURGE requests (optional)
+  # If set, PURGE requests must include this token in the Authorization header:
+  #   Authorization: Bearer your-secret-token-here
+  # Or in the X-Purge-Token header:
+  #   X-Purge-Token: your-secret-token-here
+  #
+  # If not set or null, PURGE requests will not require authentication.
+  # WARNING: In production, always use authentication to prevent unauthorized
+  # cache purging!
+  #
+  # Example:
+  #   auth_token: "your-secret-token-here"
+  # To disable authentication (NOT recommended for production):
+  #   auth_token: null
+  auth_token: "your-secret-token-here"
+  
+  # Whether to enable Prometheus metrics for PURGE operations
+  # Default: true
+  #
+  # Metrics exposed:
+  # - pingora_slice_purge_requests_total - Total PURGE requests by method
+  # - pingora_slice_purge_requests_by_result - Requests by result (success/failure)
+  # - pingora_slice_purge_items_total - Total items purged
+  # - pingora_slice_purge_duration_seconds - PURGE operation duration
+  # - pingora_slice_purge_auth_failures_total - Authentication failures
+  enable_metrics: true
+
+# To disable PURGE functionality, either omit the section entirely or set:
+# purge: null
+
+# Example PURGE requests:
+# ----------------------------------------------------------------------------
+# # Purge specific URL
+# curl -X PURGE http://your-server.com/path/to/file.dat \
+#   -H "Authorization: Bearer your-secret-token-here"
+#
+# # Purge all cache
+# curl -X PURGE http://your-server.com/* \
+#   -H "X-Purge-All: true" \
+#   -H "Authorization: Bearer your-secret-token-here"
+#
+# # Purge by URL prefix
+# curl -X PURGE http://your-server.com/videos/movie.mp4 \
+#   -H "X-Purge-Pattern: prefix" \
+#   -H "Authorization: Bearer your-secret-token-here"
 
 # ============================================================================
 # End of Configuration

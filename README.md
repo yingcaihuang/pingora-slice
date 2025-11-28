@@ -16,15 +16,38 @@ The Pingora Slice Module transparently intercepts large file requests and splits
 
 ## Features
 
+### Core Features
 - **Automatic Request Slicing**: Transparently splits large file requests into smaller chunks without client awareness
 - **Concurrent Fetching**: Fetches multiple slices in parallel with configurable concurrency limits
-- **Smart Caching**: Caches individual slices for efficient reuse and partial cache hits
 - **Range Request Support**: Correctly handles client Range requests (partial content, byte ranges)
 - **Retry Logic**: Automatic retry with exponential backoff for failed subrequests
-- **Metrics Endpoint**: Exposes detailed metrics in Prometheus format for monitoring and observability
 - **Flexible Configuration**: YAML-based configuration for slice size, concurrency, caching, and URL patterns
 - **Property-Based Testing**: Comprehensive test suite with property-based tests for correctness guarantees
 - **Error Handling**: Robust error handling with fallback to normal proxy mode when needed
+
+### Caching Features
+- **Two-Tier Cache System**: L1 (memory) + L2 (disk) for optimal performance and persistence
+  - **L1 Memory Cache**: Microsecond-level access for hot data with LRU eviction
+  - **L2 Disk Cache**: Persistent storage that survives restarts
+  - **Automatic Promotion**: L2 hits are automatically promoted to L1
+  - **Async Disk Operations**: Non-blocking disk writes for minimal latency impact
+- **Smart Caching**: Caches individual slices for efficient reuse and partial cache hits
+- **Cache Persistence**: Cached data survives service restarts (L2 cache)
+
+### Cache Management
+- **HTTP PURGE Support**: Industry-standard cache invalidation via HTTP PURGE method
+  - Purge specific URLs or all cache
+  - Token-based authentication
+  - Prometheus metrics for purge operations
+- **Flexible Purge Options**: Single URL, URL prefix, or全部缓存清除
+
+### Monitoring & Observability
+- **Metrics Endpoint**: Exposes detailed metrics in Prometheus format
+  - Cache hit/miss rates (L1 and L2)
+  - Slice processing statistics
+  - Purge operation metrics
+  - Performance metrics (latency, throughput)
+- **Structured Logging**: Comprehensive logging with tracing support
 
 ## Table of Contents
 
@@ -65,6 +88,10 @@ curl -v http://localhost:8080/large-file.bin
 
 # 6. Check metrics (if enabled)
 curl http://localhost:9090/metrics
+
+# 7. Purge cache (if enabled)
+curl -X PURGE http://localhost:8080/large-file.bin \
+  -H "Authorization: Bearer your-secret-token"
 ```
 
 ## How It Works
@@ -319,6 +346,11 @@ slice_patterns:
 enable_cache: true
 cache_ttl: 3600  # 1 hour in seconds
 
+# Two-tier cache configuration
+l1_cache_size_bytes: 104857600  # 100MB memory cache
+l2_cache_dir: "/var/cache/pingora-slice"
+enable_l2_cache: true
+
 # Upstream origin server
 upstream_address: "origin.example.com:80"
 
@@ -326,6 +358,12 @@ upstream_address: "origin.example.com:80"
 metrics_endpoint:
   enabled: true
   address: "127.0.0.1:9090"
+
+# Optional cache purge configuration
+purge:
+  enabled: true
+  auth_token: "your-secret-token-here"
+  enable_metrics: true
 ```
 
 ### Configuration Parameters
@@ -338,9 +376,15 @@ metrics_endpoint:
 | `slice_patterns` | array | [] | - | URL regex patterns for slicing |
 | `enable_cache` | boolean | true | - | Enable slice caching |
 | `cache_ttl` | integer | 3600 | > 0 | Cache TTL in seconds |
+| `l1_cache_size_bytes` | integer | 104857600 | > 0 | L1 (memory) cache size in bytes |
+| `l2_cache_dir` | string | "/var/cache/pingora-slice" | - | L2 (disk) cache directory |
+| `enable_l2_cache` | boolean | true | - | Enable L2 disk cache |
 | `upstream_address` | string | "127.0.0.1:8080" | - | Origin server address |
 | `metrics_endpoint.enabled` | boolean | false | - | Enable metrics endpoint |
 | `metrics_endpoint.address` | string | "127.0.0.1:9090" | - | Metrics server bind address |
+| `purge.enabled` | boolean | false | - | Enable HTTP PURGE method |
+| `purge.auth_token` | string | null | - | Authentication token for PURGE requests |
+| `purge.enable_metrics` | boolean | true | - | Enable Prometheus metrics for purge operations |
 
 ### Validation Rules
 
@@ -1180,11 +1224,23 @@ When reporting bugs, include:
 
 ## Documentation
 
+### General Documentation
 - [Configuration Guide](docs/CONFIGURATION.md) - Detailed configuration options
 - [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment instructions
 - [API Documentation](docs/API.md) - API reference and usage examples
 - [Performance Tuning Guide](docs/PERFORMANCE_TUNING.md) - Optimization and tuning
 - [Performance Optimization Report](docs/performance_optimization.md) - Detailed analysis and benchmarks
+
+### Cache Documentation
+- [Two-Tier Cache Architecture](docs/TIERED_CACHE.md) - L1 + L2 cache system design
+- [Cache Implementation](docs/cache_implementation.md) - Technical implementation details
+
+### Cache Purge Documentation
+- [Purge Quick Start](docs/PURGE_QUICK_START.md) - Get started with cache purge in 3 steps
+- [Purge Integration Guide](docs/PURGE_INTEGRATION_GUIDE.md) - How purge integrates with Pingora Slice
+- [HTTP PURGE Reference](docs/HTTP_PURGE_REFERENCE.md) - Complete HTTP PURGE method reference
+- [Purge Configuration and Metrics](docs/PURGE_CONFIG_AND_METRICS.md) - Configuration and Prometheus metrics
+- [Cache Purge Guide (中文)](docs/CACHE_PURGE_zh.md) - 缓存清除详细指南（中文）
 
 ## Related Projects
 

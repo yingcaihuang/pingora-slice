@@ -16,15 +16,38 @@ Pingora Slice 模块透明地拦截大文件请求，并将其拆分为更小、
 
 ## 功能特性
 
+### 核心功能
 - **自动请求分片**：透明地将大文件请求拆分为更小的块，客户端无感知
 - **并发获取**：并行获取多个分片，可配置并发限制
-- **智能缓存**：缓存单个分片以实现高效重用和部分缓存命中
 - **Range 请求支持**：正确处理客户端 Range 请求（部分内容、字节范围）
 - **重试逻辑**：失败的子请求自动重试，采用指数退避策略
-- **指标端点**：以 Prometheus 格式暴露详细指标，用于监控和可观测性
 - **灵活配置**：基于 YAML 的配置，可设置分片大小、并发数、缓存和 URL 模式
 - **基于属性的测试**：全面的测试套件，包含基于属性的测试以保证正确性
 - **错误处理**：健壮的错误处理，必要时回退到普通代理模式
+
+### 缓存功能
+- **两层缓存系统**：L1（内存）+ L2（磁盘）实现最佳性能和持久化
+  - **L1 内存缓存**：微秒级访问热数据，LRU 淘汰策略
+  - **L2 磁盘缓存**：持久化存储，服务重启后数据保留
+  - **自动提升**：L2 命中自动提升到 L1
+  - **异步磁盘操作**：非阻塞磁盘写入，最小化延迟影响
+- **智能缓存**：缓存单个分片以实现高效重用和部分缓存命中
+- **缓存持久化**：缓存数据在服务重启后保留（L2 缓存）
+
+### 缓存管理
+- **HTTP PURGE 支持**：行业标准的缓存失效方法
+  - 清除特定 URL 或全部缓存
+  - 基于令牌的认证
+  - Prometheus 指标监控清除操作
+- **灵活的清除选项**：单个 URL、URL 前缀或全部缓存清除
+
+### 监控和可观测性
+- **指标端点**：以 Prometheus 格式暴露详细指标
+  - 缓存命中/未命中率（L1 和 L2）
+  - 分片处理统计
+  - 清除操作指标
+  - 性能指标（延迟、吞吐量）
+- **结构化日志**：全面的日志记录，支持 tracing
 
 ## 目录
 
@@ -65,6 +88,10 @@ curl -v http://localhost:8080/large-file.bin
 
 # 6. 检查指标（如果启用）
 curl http://localhost:9090/metrics
+
+# 7. 清除缓存（如果启用）
+curl -X PURGE http://localhost:8080/large-file.bin \
+  -H "Authorization: Bearer your-secret-token"
 ```
 
 ## 工作原理
@@ -323,6 +350,11 @@ slice_patterns:
 enable_cache: true
 cache_ttl: 3600  # 1 小时（秒）
 
+# 两层缓存配置
+l1_cache_size_bytes: 104857600  # 100MB 内存缓存
+l2_cache_dir: "/var/cache/pingora-slice"
+enable_l2_cache: true
+
 # 上游源站服务器
 upstream_address: "origin.example.com:80"
 
@@ -330,6 +362,12 @@ upstream_address: "origin.example.com:80"
 metrics_endpoint:
   enabled: true
   address: "127.0.0.1:9090"
+
+# 可选的缓存清除配置
+purge:
+  enabled: true
+  auth_token: "your-secret-token-here"
+  enable_metrics: true
 ```
 
 ### 配置参数
@@ -342,9 +380,15 @@ metrics_endpoint:
 | `slice_patterns` | 数组 | [] | - | 用于分片的 URL 正则模式 |
 | `enable_cache` | 布尔值 | true | - | 启用分片缓存 |
 | `cache_ttl` | 整数 | 3600 | > 0 | 缓存 TTL（秒） |
+| `l1_cache_size_bytes` | 整数 | 104857600 | > 0 | L1（内存）缓存大小（字节） |
+| `l2_cache_dir` | 字符串 | "/var/cache/pingora-slice" | - | L2（磁盘）缓存目录 |
+| `enable_l2_cache` | 布尔值 | true | - | 启用 L2 磁盘缓存 |
 | `upstream_address` | 字符串 | "127.0.0.1:8080" | - | 源站服务器地址 |
 | `metrics_endpoint.enabled` | 布尔值 | false | - | 启用指标端点 |
 | `metrics_endpoint.address` | 字符串 | "127.0.0.1:9090" | - | 指标服务器绑定地址 |
+| `purge.enabled` | 布尔值 | false | - | 启用 HTTP PURGE 方法 |
+| `purge.auth_token` | 字符串 | null | - | PURGE 请求的认证令牌 |
+| `purge.enable_metrics` | 布尔值 | true | - | 启用清除操作的 Prometheus 指标 |
 
 ### 配置预设
 
@@ -1033,7 +1077,20 @@ git push origin feature/your-feature-name
 
 ## 文档
 
+### 通用文档
 - [English README](README.md) - 英文文档
 - [部署指南（中文）](docs/DEPLOYMENT_zh.md) - 详细的部署说明
 - [配置指南](docs/CONFIGURATION.md) - 配置参数详解（英文）
 - [API 文档](docs/API.md) - API 参考（英文）
+- [性能调优指南](docs/PERFORMANCE_TUNING.md) - 优化和调优（英文）
+
+### 缓存文档
+- [两层缓存架构](docs/TIERED_CACHE.md) - L1 + L2 缓存系统设计（英文）
+- [缓存实现](docs/cache_implementation.md) - 技术实现细节（英文）
+
+### 缓存清除文档
+- [Purge 快速开始](docs/PURGE_QUICK_START.md) - 3 步启用缓存清除（英文）
+- [Purge 集成指南](docs/PURGE_INTEGRATION_GUIDE.md) - Purge 如何集成到 Pingora Slice（英文）
+- [HTTP PURGE 参考](docs/HTTP_PURGE_REFERENCE.md) - 完整的 HTTP PURGE 方法参考（英文）
+- [Purge 配置和指标](docs/PURGE_CONFIG_AND_METRICS.md) - 配置和 Prometheus 指标（英文）
+- [缓存清除指南（中文）](docs/CACHE_PURGE_zh.md) - 缓存清除详细指南

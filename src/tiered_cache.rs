@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -30,6 +30,9 @@ enum DiskWriteMessage {
         key: String,
         data: Bytes,
         expires_at: SystemTime,
+    },
+    Delete {
+        key: String,
     },
     Shutdown,
 }
@@ -45,6 +48,7 @@ struct L1Entry {
 
 /// L2 disk cache metadata
 #[derive(Clone)]
+#[allow(dead_code)]
 struct L2Metadata {
     expires_at: SystemTime,
     size_bytes: usize,
@@ -322,6 +326,16 @@ impl TieredCache {
                         stats.write().unwrap().disk_writes += 1;
                     }
                 }
+                DiskWriteMessage::Delete { key } => {
+                    let file_path = Self::get_l2_file_path_static(&base_path, &key);
+                    if let Err(e) = fs::remove_file(&file_path).await {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            warn!("Failed to delete L2 cache file {}: {}", file_path.display(), e);
+                        }
+                    } else {
+                        debug!("Deleted from L2: {}", key);
+                    }
+                }
                 DiskWriteMessage::Shutdown => {
                     info!("Disk writer task shutting down");
                     break;
@@ -428,6 +442,125 @@ impl TieredCache {
         
         result
     }
+    
+    /// Purge a specific cached slice from both L1 and L2
+    ///
+    /// # Arguments
+    /// * `url` - The URL of the cached resource
+    /// * `range` - The byte range of the slice to purge
+    ///
+    /// # Returns
+    /// `true` if the entry was found and removed, `false` otherwise
+    pub async fn purge(&self, url: &str, range: &ByteRange) -> Result<bool> {
+        let key = self.generate_cache_key(url, range);
+        
+        // Remove from L1
+        let removed_from_l1 = {
+            let mut storage = self.l1_storage.write().unwrap();
+            if let Some(entry) = storage.remove(&key) {
+                let mut size = self.l1_current_size.write().unwrap();
+                *size = size.saturating_sub(entry.data.len());
+                debug!("Purged from L1: {}", key);
+                true
+            } else {
+                false
+            }
+        };
+        
+        // Remove from L2 (async)
+        if self.l2_enabled {
+            if let Some(tx) = &self.disk_writer_tx {
+                let _ = tx.send(DiskWriteMessage::Delete { key: key.clone() });
+            }
+        }
+        
+        info!("Purged cache entry: {} (L1: {})", key, removed_from_l1);
+        Ok(removed_from_l1)
+    }
+    
+    /// Purge all cached slices for a specific URL
+    ///
+    /// This removes all cache entries whose keys start with the given URL.
+    ///
+    /// # Arguments
+    /// * `url` - The URL of the resource to purge
+    ///
+    /// # Returns
+    /// The number of entries purged from L1
+    pub async fn purge_url(&self, url: &str) -> Result<usize> {
+        let url_prefix = format!("{}:", url);
+        let mut purged_count = 0;
+        
+        // Collect keys to remove (to avoid holding lock during iteration)
+        let keys_to_remove: Vec<String> = {
+            let storage = self.l1_storage.read().unwrap();
+            storage
+                .keys()
+                .filter(|k| k.starts_with(&url_prefix))
+                .cloned()
+                .collect()
+        };
+        
+        // Remove from L1
+        {
+            let mut storage = self.l1_storage.write().unwrap();
+            let mut size = self.l1_current_size.write().unwrap();
+            
+            for key in &keys_to_remove {
+                if let Some(entry) = storage.remove(key) {
+                    *size = size.saturating_sub(entry.data.len());
+                    purged_count += 1;
+                    debug!("Purged from L1: {}", key);
+                }
+            }
+        }
+        
+        // Remove from L2 (async)
+        if self.l2_enabled {
+            if let Some(tx) = &self.disk_writer_tx {
+                for key in keys_to_remove {
+                    let _ = tx.send(DiskWriteMessage::Delete { key });
+                }
+            }
+        }
+        
+        info!("Purged {} cache entries for URL: {}", purged_count, url);
+        Ok(purged_count)
+    }
+    
+    /// Purge all cached entries from both L1 and L2
+    ///
+    /// # Returns
+    /// The number of entries purged from L1
+    pub async fn purge_all(&self) -> Result<usize> {
+        // Collect all keys
+        let all_keys: Vec<String> = {
+            let storage = self.l1_storage.read().unwrap();
+            storage.keys().cloned().collect()
+        };
+        
+        let purged_count = all_keys.len();
+        
+        // Clear L1
+        {
+            let mut storage = self.l1_storage.write().unwrap();
+            storage.clear();
+            let mut size = self.l1_current_size.write().unwrap();
+            *size = 0;
+        }
+        
+        // Remove from L2 (async)
+        if self.l2_enabled {
+            if let Some(tx) = &self.disk_writer_tx {
+                for key in all_keys {
+                    let _ = tx.send(DiskWriteMessage::Delete { key });
+                }
+            }
+        }
+        
+        info!("Purged all cache entries: {} total", purged_count);
+        Ok(purged_count)
+    }
 }
 
 impl Drop for TieredCache {
@@ -444,11 +577,10 @@ impl Drop for TieredCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     
     #[tokio::test]
     async fn test_l1_cache() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
         let cache = TieredCache::new(
             Duration::from_secs(60),
             1024 * 1024, // 1MB
@@ -473,7 +605,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_l2_persistence() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
         let range = ByteRange::new(0, 999).unwrap();
         let data = Bytes::from(vec![2u8; 1000]);
         
@@ -508,5 +640,117 @@ mod tests {
         
         let stats = cache2.get_stats();
         assert_eq!(stats.l2_hits, 1);
+    }
+    
+    #[tokio::test]
+    async fn test_purge_single_entry() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let cache = TieredCache::new(
+            Duration::from_secs(60),
+            1024 * 1024,
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        
+        let range = ByteRange::new(0, 999).unwrap();
+        let data = Bytes::from(vec![1u8; 1000]);
+        
+        // Store data
+        cache.store("http://example.com/file", &range, data.clone()).unwrap();
+        
+        // Verify it's cached
+        let result = cache.lookup("http://example.com/file", &range).await.unwrap();
+        assert_eq!(result, Some(data));
+        
+        // Purge the entry
+        let purged = cache.purge("http://example.com/file", &range).await.unwrap();
+        assert!(purged);
+        
+        // Verify it's gone
+        let result = cache.lookup("http://example.com/file", &range).await.unwrap();
+        assert_eq!(result, None);
+    }
+    
+    #[tokio::test]
+    async fn test_purge_url() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let cache = TieredCache::new(
+            Duration::from_secs(60),
+            1024 * 1024,
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        
+        // Store multiple slices for the same URL
+        let url = "http://example.com/largefile";
+        let range1 = ByteRange::new(0, 999).unwrap();
+        let range2 = ByteRange::new(1000, 1999).unwrap();
+        let range3 = ByteRange::new(2000, 2999).unwrap();
+        let data = Bytes::from(vec![1u8; 1000]);
+        
+        cache.store(url, &range1, data.clone()).unwrap();
+        cache.store(url, &range2, data.clone()).unwrap();
+        cache.store(url, &range3, data.clone()).unwrap();
+        
+        // Store data for a different URL
+        cache.store("http://example.com/other", &range1, data.clone()).unwrap();
+        
+        // Verify all are cached
+        assert!(cache.lookup(url, &range1).await.unwrap().is_some());
+        assert!(cache.lookup(url, &range2).await.unwrap().is_some());
+        assert!(cache.lookup(url, &range3).await.unwrap().is_some());
+        assert!(cache.lookup("http://example.com/other", &range1).await.unwrap().is_some());
+        
+        // Purge all slices for the URL
+        let purged = cache.purge_url(url).await.unwrap();
+        assert_eq!(purged, 3);
+        
+        // Verify they're gone
+        assert!(cache.lookup(url, &range1).await.unwrap().is_none());
+        assert!(cache.lookup(url, &range2).await.unwrap().is_none());
+        assert!(cache.lookup(url, &range3).await.unwrap().is_none());
+        
+        // Verify other URL is still cached
+        assert!(cache.lookup("http://example.com/other", &range1).await.unwrap().is_some());
+    }
+    
+    #[tokio::test]
+    async fn test_purge_all() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let cache = TieredCache::new(
+            Duration::from_secs(60),
+            1024 * 1024,
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        
+        // Store multiple entries
+        let range = ByteRange::new(0, 999).unwrap();
+        let data = Bytes::from(vec![1u8; 1000]);
+        
+        cache.store("http://example.com/file1", &range, data.clone()).unwrap();
+        cache.store("http://example.com/file2", &range, data.clone()).unwrap();
+        cache.store("http://example.com/file3", &range, data.clone()).unwrap();
+        
+        // Verify all are cached
+        assert!(cache.lookup("http://example.com/file1", &range).await.unwrap().is_some());
+        assert!(cache.lookup("http://example.com/file2", &range).await.unwrap().is_some());
+        assert!(cache.lookup("http://example.com/file3", &range).await.unwrap().is_some());
+        
+        // Purge all
+        let purged = cache.purge_all().await.unwrap();
+        assert_eq!(purged, 3);
+        
+        // Verify all are gone
+        assert!(cache.lookup("http://example.com/file1", &range).await.unwrap().is_none());
+        assert!(cache.lookup("http://example.com/file2", &range).await.unwrap().is_none());
+        assert!(cache.lookup("http://example.com/file3", &range).await.unwrap().is_none());
+        
+        let stats = cache.get_stats();
+        assert_eq!(stats.l1_entries, 0);
+        assert_eq!(stats.l1_bytes, 0);
     }
 }

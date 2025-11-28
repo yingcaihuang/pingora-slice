@@ -183,6 +183,8 @@ pub mod metadata_fetcher;
 pub mod slice_calculator;
 pub mod cache;
 pub mod tiered_cache;  // New two-tier cache implementation
+pub mod purge_handler;  // HTTP PURGE method handler
+pub mod purge_metrics;  // Prometheus metrics for purge operations
 pub mod subrequest_manager;
 pub mod response_assembler;
 pub mod metrics;

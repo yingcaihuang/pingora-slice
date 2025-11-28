@@ -11,13 +11,9 @@ use crate::error::Result;
 use crate::models::ByteRange;
 use bytes::Bytes;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
-use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
 
 /// Cached slice entry with expiration and access tracking
 #[derive(Clone)]
