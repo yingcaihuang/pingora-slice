@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2024-11-28
+
+### Added
+- **Two-Tier Cache System**: L1 (memory) + L2 (disk) cache architecture
+  - Automatic promotion from L2 to L1 on cache hits
+  - LRU eviction policy for both cache tiers
+  - Async disk operations for non-blocking performance
+  - Configurable size limits for both tiers
+- **HTTP PURGE Support**: Cache invalidation via HTTP PURGE method
+  - Purge specific URLs or all cached content
+  - Token-based authentication for security
+  - Comprehensive purge metrics
+- **Enhanced Metrics**: New Prometheus metrics for cache and purge operations
+  - L1/L2 cache hit/miss counters
+  - Cache promotion and eviction metrics
+  - Purge operation success/failure tracking
+- **Complete Documentation**: 
+  - Tiered cache architecture guide
+  - HTTP PURGE integration guide
+  - Chinese documentation for cache purge
+  - Quick start and reference guides
+- **Examples and Tools**:
+  - HTTP PURGE server example
+  - Tiered cache example with purge support
+  - Test script for purge operations
+
+### Changed
+- Updated cache implementation to support two-tier architecture
+- Enhanced configuration with L2 cache and purge settings
+- Improved README with new features documentation
+
+### Performance
+- Non-blocking disk I/O for L2 cache operations
+- Efficient memory management with automatic promotion
+- Optimized cache lookup across both tiers
+
 ## [0.1.0] - 2024-01-XX
 
 ### Added
