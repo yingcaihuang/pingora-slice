@@ -104,7 +104,7 @@ jobs:
           mkdir -p %{buildroot}%{_sysconfdir}/pingora-slice
           mkdir -p %{buildroot}%{_var}/cache/pingora-slice
           mkdir -p %{buildroot}%{_var}/log/pingora-slice
-          mkdir -p %{buildroot}%{_unitdir}
+          mkdir -p %{buildroot}/usr/lib/systemd/system
           
           # Install binary
           install -m 755 $GITHUB_WORKSPACE/target/release/pingora-slice %{buildroot}%{_bindir}/pingora-slice
@@ -113,7 +113,7 @@ jobs:
           install -m 644 $GITHUB_WORKSPACE/examples/pingora_slice.yaml %{buildroot}%{_sysconfdir}/pingora-slice/pingora_slice.yaml
           
           # Install systemd service
-          cat > %{buildroot}%{_unitdir}/pingora-slice.service << 'SERVICEEOF'
+          cat > %{buildroot}/usr/lib/systemd/system/pingora-slice.service << 'SERVICEEOF'
           [Unit]
           Description=Pingora Slice Proxy Server
           After=network.target
@@ -155,7 +155,7 @@ jobs:
           %files
           %{_bindir}/pingora-slice
           %config(noreplace) %{_sysconfdir}/pingora-slice/pingora_slice.yaml
-          %{_unitdir}/pingora-slice.service
+          /usr/lib/systemd/system/pingora-slice.service
           %attr(0755,pingora-slice,pingora-slice) %dir %{_var}/cache/pingora-slice
           %attr(0755,pingora-slice,pingora-slice) %dir %{_var}/log/pingora-slice
           
