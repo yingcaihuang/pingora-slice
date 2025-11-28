@@ -1,6 +1,6 @@
 [package]
 name = "pingora-slice"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 
 # Define the main binary using the http_purge_server example

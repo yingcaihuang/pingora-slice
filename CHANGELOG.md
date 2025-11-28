@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2024-11-28
+
+### Fixed
+- **RPM Build Error**: Fix CentOS 9 packaging failure
+  - Replace `%{_unitdir}` macro with absolute path `/usr/lib/systemd/system`
+  - Replace `%{_var}` macro with absolute path `/var` for cache and log directories
+  - Fixes "File must begin with '/'" error during RPM build
+  - Ensures RPM builds successfully on all supported platforms
+
 ## [0.2.2] - 2024-11-28
 
 ### Fixed
