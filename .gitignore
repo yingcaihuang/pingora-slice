@@ -1,0 +1,41 @@
+# Rust
+/target
+Cargo.lock
+*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+*.rpm
+*.deb
+*.tar.gz
+*.zip
+
+# Logs
+*.log
+/logs/
+
+# Cache
+/cache/
+.cache/
+
+# Test coverage
+*.profraw
+*.profdata
+/coverage/
+
+# RPM build
+rpmbuild/
+*.src.rpm
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/

@@ -1,0 +1,48 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'pingora-slice'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  # - "alerts.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Pingora Slice metrics
+  - job_name: 'pingora-slice'
+    static_configs:
+      - targets: ['pingora-slice:9091']
+        labels:
+          service: 'pingora-slice'
+          instance: 'main'
+    
+    # Scrape interval for this job
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    
+    # Metrics path
+    metrics_path: '/metrics'
+    
+    # Relabeling
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: pingora-slice:9091
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

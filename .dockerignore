@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+target/
+*.rpm
+*.deb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+
+# Kiro
+.kiro/
+
+# Tests
+tests/
+*.proptest-regressions
+
+# Packaging
+packaging/
+
+# Scripts
+scripts/
+
+# Logs
+*.log
+logs/
+
+# Cache
+cache/
+.cache/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/

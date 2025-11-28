@@ -1,0 +1,112 @@
+groups:
+  - name: pingora_slice_alerts
+    interval: 30s
+    rules:
+      # Service availability
+      - alert: PingoraSliceDown
+        expr: up{job="pingora-slice"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pingora Slice service is down"
+          description: "Pingora Slice instance {{ $labels.instance }} has been down for more than 1 minute."
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(pingora_slice_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}."
+
+      # Low cache hit rate
+      - alert: LowCacheHitRate
+        expr: |
+          (
+            rate(pingora_slice_cache_hits_total[10m]) / 
+            (rate(pingora_slice_cache_hits_total[10m]) + rate(pingora_slice_cache_misses_total[10m]))
+          ) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}. Expected > 50%."
+
+      # High request latency
+      - alert: HighRequestLatency
+        expr: |
+          histogram_quantile(0.95, 
+            rate(pingora_slice_request_duration_seconds_bucket[5m])
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High request latency"
+          description: "95th percentile request latency is {{ $value }}s on instance {{ $labels.instance }}."
+
+      # High subrequest failure rate
+      - alert: HighSubrequestFailureRate
+        expr: |
+          (
+            rate(pingora_slice_failed_subrequests_total[5m]) / 
+            rate(pingora_slice_total_subrequests_total[5m])
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High subrequest failure rate"
+          description: "Subrequest failure rate is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}."
+
+      # Cache storage issues
+      - alert: CacheStorageErrors
+        expr: rate(pingora_slice_cache_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cache storage errors detected"
+          description: "Cache error rate is {{ $value }} errors/sec on instance {{ $labels.instance }}."
+
+      # High memory usage (if available)
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            process_resident_memory_bytes{job="pingora-slice"} / 
+            node_memory_MemTotal_bytes
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}."
+
+      # Too many concurrent requests
+      - alert: HighConcurrency
+        expr: pingora_slice_active_requests > 1000
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "High number of concurrent requests"
+          description: "{{ $value }} concurrent requests on instance {{ $labels.instance }}."
+
+      # Retry rate too high
+      - alert: HighRetryRate
+        expr: |
+          (
+            rate(pingora_slice_retried_subrequests_total[5m]) / 
+            rate(pingora_slice_total_subrequests_total[5m])
+          ) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High retry rate"
+          description: "Retry rate is {{ $value | humanizePercentage }} on instance {{ $labels.instance }}. This may indicate upstream issues."

@@ -1,0 +1,232 @@
+# ============================================================================
+# Pingora Slice Module - Configuration Example
+# ============================================================================
+#
+# This file demonstrates all available configuration options for the
+# Pingora Slice module. The Slice module automatically splits large file
+# requests into multiple smaller Range requests to improve caching efficiency
+# and reduce origin server load.
+#
+# For more information, see the README.md file.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Slice Size Configuration
+# ----------------------------------------------------------------------------
+# Size of each slice in bytes. This determines how large each Range request
+# will be when fetching from the origin server.
+#
+# Valid range: 64KB (65536) to 10MB (10485760)
+# Default: 1MB (1048576)
+#
+# Tuning guidelines:
+# - Smaller slices (256KB-512KB): Better for slow/unreliable networks,
+#   more granular caching, but higher overhead
+# - Medium slices (1MB-2MB): Good balance for most use cases
+# - Larger slices (4MB-10MB): Better for fast networks and large files,
+#   but less efficient caching
+#
+# Example values:
+#   slice_size: 262144    # 256KB
+#   slice_size: 524288    # 512KB
+#   slice_size: 1048576   # 1MB (default)
+#   slice_size: 2097152   # 2MB
+#   slice_size: 4194304   # 4MB
+slice_size: 1048576
+
+# ----------------------------------------------------------------------------
+# Concurrency Control
+# ----------------------------------------------------------------------------
+# Maximum number of concurrent subrequests to the origin server.
+# This controls how many slices can be fetched in parallel.
+#
+# Default: 4
+#
+# Tuning guidelines:
+# - Lower values (2-4): Reduces load on origin server, suitable for
+#   bandwidth-limited origins
+# - Medium values (4-8): Good balance for most scenarios
+# - Higher values (8-16): Maximizes throughput for high-bandwidth origins,
+#   but may overwhelm the origin server
+#
+# Note: Setting this too high may cause the origin server to rate-limit
+# or reject requests. Monitor origin server performance when tuning.
+max_concurrent_subrequests: 4
+
+# ----------------------------------------------------------------------------
+# Retry Configuration
+# ----------------------------------------------------------------------------
+# Maximum number of retry attempts for failed subrequests.
+# When a slice request fails, it will be retried up to this many times
+# with exponential backoff before giving up.
+#
+# Default: 3
+#
+# Retry backoff schedule: 100ms, 200ms, 400ms, 800ms
+#
+# Tuning guidelines:
+# - 0: No retries, fail immediately (not recommended)
+# - 1-2: Minimal retries, faster failure detection
+# - 3-5: Recommended for most scenarios
+# - 6+: Aggressive retries, may cause delays for clients
+max_retries: 3
+
+# ----------------------------------------------------------------------------
+# URL Pattern Matching
+# ----------------------------------------------------------------------------
+# URL patterns that should enable slicing (regex patterns).
+# Only requests matching these patterns will use the slice module.
+# If the list is empty, all GET requests without Range headers will be
+# considered for slicing.
+#
+# Default: [] (empty list, matches all requests)
+#
+# Pattern syntax: Standard Rust regex syntax
+# - Use ^ to match the beginning of the path
+# - Use $ to match the end of the path
+# - Use .* to match any characters
+# - Use \. to match a literal dot
+# - Use (option1|option2) for alternatives
+#
+# Examples:
+slice_patterns:
+  # Match all files in /large-files/ directory
+  - "^/large-files/.*"
+  
+  # Match binary files in /downloads/ directory
+  - "^/downloads/.*\\.bin$"
+  
+  # Match video files with common extensions
+  - "^/videos/.*\\.(mp4|mkv|avi|mov|wmv)$"
+  
+  # Match ISO images
+  - "^/isos/.*\\.iso$"
+  
+  # Match compressed archives
+  - "^/archives/.*\\.(zip|tar|gz|bz2|7z)$"
+
+# To disable pattern matching and slice all requests, use an empty list:
+# slice_patterns: []
+
+# ----------------------------------------------------------------------------
+# Cache Configuration
+# ----------------------------------------------------------------------------
+# Whether to enable caching of slices. When enabled, each slice is cached
+# independently, allowing subsequent requests to reuse cached slices.
+#
+# Default: true
+#
+# Benefits of caching:
+# - Reduces load on origin server
+# - Improves response time for repeated requests
+# - Enables efficient partial cache hits (some slices cached, others fetched)
+#
+# Disable caching if:
+# - Content changes frequently
+# - Storage space is limited
+# - Content is already cached upstream
+enable_cache: true
+
+# Cache TTL (Time To Live) in seconds.
+# How long cached slices should be kept before expiring.
+#
+# Default: 3600 (1 hour)
+#
+# Common values:
+#   cache_ttl: 300      # 5 minutes (frequently changing content)
+#   cache_ttl: 1800     # 30 minutes
+#   cache_ttl: 3600     # 1 hour (default)
+#   cache_ttl: 7200     # 2 hours
+#   cache_ttl: 86400    # 24 hours (static content)
+#   cache_ttl: 604800   # 7 days (rarely changing content)
+cache_ttl: 3600
+
+# ----------------------------------------------------------------------------
+# Upstream Server Configuration
+# ----------------------------------------------------------------------------
+# Upstream origin server address where the actual content is hosted.
+# The slice module will send Range requests to this server.
+#
+# Format: "host:port" or "ip:port"
+# Default: "127.0.0.1:8080"
+#
+# Examples:
+#   upstream_address: "origin.example.com:80"
+#   upstream_address: "192.168.1.100:8080"
+#   upstream_address: "backend.internal:3000"
+upstream_address: "origin.example.com:80"
+
+# ----------------------------------------------------------------------------
+# Metrics Endpoint Configuration (Optional)
+# ----------------------------------------------------------------------------
+# Configuration for the HTTP metrics endpoint that exposes runtime statistics
+# in Prometheus format. This is useful for monitoring and observability.
+#
+# If this section is omitted or set to null, the metrics endpoint will be
+# disabled.
+#
+# Exposed metrics include:
+# - Total requests and sliced requests
+# - Cache hit/miss rates
+# - Subrequest counts and latencies
+# - Error rates
+# - Bytes transferred (from origin, from cache, to client)
+metrics_endpoint:
+  # Whether to enable the metrics endpoint
+  # Default: false
+  enabled: true
+  
+  # Address to bind the metrics HTTP server to
+  # Format: "host:port"
+  # Default: "127.0.0.1:9090"
+  #
+  # Security considerations:
+  # - Binding to 127.0.0.1 (localhost) restricts access to local machine only
+  # - Binding to 0.0.0.0 allows access from any network interface
+  # - Use firewall rules or reverse proxy for external access
+  # - Consider authentication if exposing externally
+  #
+  # Examples:
+  #   address: "127.0.0.1:9090"  # Local access only (recommended)
+  #   address: "0.0.0.0:9090"    # All interfaces (use with caution)
+  #   address: "10.0.0.5:9090"   # Specific internal IP
+  address: "127.0.0.1:9090"
+
+# To disable the metrics endpoint, either omit the section entirely or set:
+# metrics_endpoint: null
+
+# ============================================================================
+# Configuration Examples for Different Scenarios
+# ============================================================================
+
+# Example 1: High-performance setup for fast networks
+# ----------------------------------------------------------------------------
+# slice_size: 4194304                    # 4MB slices
+# max_concurrent_subrequests: 8          # Higher concurrency
+# max_retries: 2                         # Fewer retries
+# cache_ttl: 86400                       # 24 hour cache
+
+# Example 2: Conservative setup for slow/unreliable networks
+# ----------------------------------------------------------------------------
+# slice_size: 262144                     # 256KB slices
+# max_concurrent_subrequests: 2          # Lower concurrency
+# max_retries: 5                         # More retries
+# cache_ttl: 3600                        # 1 hour cache
+
+# Example 3: Minimal caching for frequently changing content
+# ----------------------------------------------------------------------------
+# slice_size: 1048576                    # 1MB slices
+# max_concurrent_subrequests: 4          # Standard concurrency
+# max_retries: 3                         # Standard retries
+# cache_ttl: 300                         # 5 minute cache
+
+# Example 4: Disable slicing for specific patterns
+# ----------------------------------------------------------------------------
+# slice_patterns:
+#   - "^/api/.*"                         # Only slice API endpoints
+# Or use an empty list to slice everything:
+# slice_patterns: []
+
+# ============================================================================
+# End of Configuration
+# ============================================================================

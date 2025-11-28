@@ -1,0 +1,56 @@
+# Optimized Pingora Slice Configuration
+# This configuration is tuned for high-performance scenarios
+
+# Slice size in bytes (2MB for better throughput)
+# Larger slices reduce request overhead but may impact cache granularity
+slice_size: 2097152
+
+# Maximum concurrent subrequests (8 for high throughput)
+# Increase this if you have high bandwidth and a capable origin server
+max_concurrent_subrequests: 8
+
+# Maximum retry attempts (2 for faster failure)
+# Reduce retries in high-throughput scenarios to fail fast
+max_retries: 2
+
+# URL patterns that should enable slicing (regex patterns)
+# Only enable slicing for large files to avoid overhead on small files
+slice_patterns:
+  - "^/large-files/.*"
+  - "^/downloads/.*\\.(bin|iso|zip|tar\\.gz)$"
+  - "^/videos/.*\\.(mp4|mkv|avi)$"
+
+# Enable caching for better performance
+enable_cache: true
+
+# Cache TTL in seconds (2 hours for longer caching)
+# Increase this if your content doesn't change frequently
+cache_ttl: 7200
+
+# Upstream server address
+upstream_address: "origin.example.com:80"
+
+# Metrics endpoint configuration
+metrics_endpoint:
+  enabled: true
+  address: "127.0.0.1:9090"
+
+# Performance tuning notes:
+# 
+# High-Throughput Scenario:
+# - slice_size: 2097152 (2MB)
+# - max_concurrent_subrequests: 8
+# - max_retries: 2
+# - cache_ttl: 7200 (2 hours)
+#
+# Low-Memory Scenario:
+# - slice_size: 524288 (512KB)
+# - max_concurrent_subrequests: 4
+# - max_retries: 3
+# - cache_ttl: 1800 (30 minutes)
+#
+# Balanced Scenario (Default):
+# - slice_size: 1048576 (1MB)
+# - max_concurrent_subrequests: 4
+# - max_retries: 3
+# - cache_ttl: 3600 (1 hour)

@@ -1,0 +1,50 @@
+[Unit]
+Description=Pingora Slice Proxy Server
+Documentation=https://github.com/your-username/pingora-slice
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pingora-slice
+Group=pingora-slice
+
+# Main process
+ExecStart=/usr/bin/pingora-slice /etc/pingora-slice/pingora_slice.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/cache/pingora-slice /var/log/pingora-slice
+
+# Sandboxing
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+TasksMax=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pingora-slice
+
+[Install]
+WantedBy=multi-user.target

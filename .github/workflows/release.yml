@@ -1,0 +1,283 @@
+name: Build and Release RPM
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        default: '0.1.0'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-rpm:
+    name: Build RPM for ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: centos8
+            container: quay.io/centos/centos:stream8
+            rpm_dist: el8
+          - os: centos9
+            container: quay.io/centos/centos:stream9
+            rpm_dist: el9
+    
+    container:
+      image: ${{ matrix.container }}
+    
+    steps:
+      - name: Install dependencies
+        run: |
+          dnf install -y gcc gcc-c++ make cmake openssl-devel rpm-build rpmdevtools git
+          
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Setup RPM build environment
+        run: |
+          rpmdev-setuptree
+          
+      - name: Build binary
+        run: |
+          source $HOME/.cargo/env
+          cargo build --release
+          
+      - name: Create RPM spec file
+        run: |
+          cat > ~/rpmbuild/SPECS/pingora-slice.spec << 'EOF'
+          Name:           pingora-slice
+          Version:        ${{ steps.get_version.outputs.VERSION }}
+          Release:        1%{?dist}
+          Summary:        Pingora Slice Module - Automatic file slicing proxy for large files
+          
+          License:        MIT
+          URL:            https://github.com/${{ github.repository }}
+          Source0:        %{name}-%{version}.tar.gz
+          
+          BuildRequires:  gcc
+          BuildRequires:  openssl-devel
+          Requires:       openssl-libs
+          
+          %description
+          Pingora Slice Module is a high-performance proxy module for Pingora that automatically
+          splits large file requests into multiple Range requests, improving cache efficiency
+          and reducing origin server load.
+          
+          %prep
+          # No prep needed - binary already built
+          
+          %build
+          # Build done in GitHub Actions
+          
+          %install
+          rm -rf %{buildroot}
+          mkdir -p %{buildroot}%{_bindir}
+          mkdir -p %{buildroot}%{_sysconfdir}/pingora-slice
+          mkdir -p %{buildroot}%{_var}/cache/pingora-slice
+          mkdir -p %{buildroot}%{_var}/log/pingora-slice
+          mkdir -p %{buildroot}%{_unitdir}
+          
+          # Install binary
+          install -m 755 $GITHUB_WORKSPACE/target/release/pingora-slice %{buildroot}%{_bindir}/pingora-slice
+          
+          # Install config
+          install -m 644 $GITHUB_WORKSPACE/examples/pingora_slice.yaml %{buildroot}%{_sysconfdir}/pingora-slice/pingora_slice.yaml
+          
+          # Install systemd service
+          cat > %{buildroot}%{_unitdir}/pingora-slice.service << 'SERVICEEOF'
+          [Unit]
+          Description=Pingora Slice Proxy Server
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=pingora-slice
+          Group=pingora-slice
+          ExecStart=/usr/bin/pingora-slice /etc/pingora-slice/pingora_slice.yaml
+          Restart=on-failure
+          RestartSec=5s
+          
+          # Security settings
+          NoNewPrivileges=true
+          PrivateTmp=true
+          ProtectSystem=strict
+          ProtectHome=true
+          ReadWritePaths=/var/cache/pingora-slice /var/log/pingora-slice
+          
+          [Install]
+          WantedBy=multi-user.target
+          SERVICEEOF
+          
+          %pre
+          getent group pingora-slice >/dev/null || groupadd -r pingora-slice
+          getent passwd pingora-slice >/dev/null || \
+              useradd -r -g pingora-slice -d /var/cache/pingora-slice -s /sbin/nologin \
+              -c "Pingora Slice service user" pingora-slice
+          
+          %post
+          %systemd_post pingora-slice.service
+          
+          %preun
+          %systemd_preun pingora-slice.service
+          
+          %postun
+          %systemd_postun_with_restart pingora-slice.service
+          
+          %files
+          %{_bindir}/pingora-slice
+          %config(noreplace) %{_sysconfdir}/pingora-slice/pingora_slice.yaml
+          %{_unitdir}/pingora-slice.service
+          %attr(0755,pingora-slice,pingora-slice) %dir %{_var}/cache/pingora-slice
+          %attr(0755,pingora-slice,pingora-slice) %dir %{_var}/log/pingora-slice
+          
+          %changelog
+          * $(date "+%a %b %d %Y") GitHub Actions <noreply@github.com> - ${{ steps.get_version.outputs.VERSION }}-1
+          - Automated build from GitHub Actions
+          EOF
+          
+      - name: Build RPM
+        run: |
+          rpmbuild -bb ~/rpmbuild/SPECS/pingora-slice.spec
+          
+      - name: Find RPM file
+        id: find_rpm
+        run: |
+          RPM_FILE=$(find ~/rpmbuild/RPMS -name "*.rpm" -type f)
+          echo "rpm_file=$RPM_FILE" >> $GITHUB_OUTPUT
+          echo "rpm_name=$(basename $RPM_FILE)" >> $GITHUB_OUTPUT
+          
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pingora-slice-${{ matrix.rpm_dist }}.rpm
+          path: ${{ steps.find_rpm.outputs.rpm_file }}
+          retention-days: 5
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-rpm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "TAG=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          
+      - name: Display structure of downloaded files
+        run: ls -R ./artifacts
+        
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.TAG }}
+          release_name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## Pingora Slice v${{ steps.get_version.outputs.VERSION }}
+            
+            ### 安装说明
+            
+            #### CentOS 8 / Rocky Linux 8 / AlmaLinux 8
+            ```bash
+            sudo dnf install -y ./pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el8.x86_64.rpm
+            ```
+            
+            #### CentOS 9 / Rocky Linux 9 / AlmaLinux 9
+            ```bash
+            sudo dnf install -y ./pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el9.x86_64.rpm
+            ```
+            
+            ### 配置和启动
+            
+            1. 编辑配置文件：
+            ```bash
+            sudo vi /etc/pingora-slice/pingora_slice.yaml
+            ```
+            
+            2. 启动服务：
+            ```bash
+            sudo systemctl start pingora-slice
+            sudo systemctl enable pingora-slice
+            ```
+            
+            3. 查看状态：
+            ```bash
+            sudo systemctl status pingora-slice
+            ```
+            
+            ### 功能特性
+            
+            - ✅ 自动分片回源，提高大文件缓存效率
+            - ✅ 并发子请求，加速文件传输
+            - ✅ 智能缓存管理，减少源站压力
+            - ✅ 支持客户端 Range 请求
+            - ✅ 完整的错误处理和重试机制
+            - ✅ Prometheus 指标监控
+            
+            ### 文档
+            
+            - [README](https://github.com/${{ github.repository }}/blob/main/README.md)
+            - [中文文档](https://github.com/${{ github.repository }}/blob/main/README_zh.md)
+            - [配置说明](https://github.com/${{ github.repository }}/blob/main/docs/CONFIGURATION.md)
+            - [部署指南](https://github.com/${{ github.repository }}/blob/main/docs/DEPLOYMENT.md)
+          draft: false
+          prerelease: false
+          
+      - name: Upload CentOS 8 RPM
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/pingora-slice-el8.rpm/pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el8.x86_64.rpm
+          asset_name: pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el8.x86_64.rpm
+          asset_content_type: application/x-rpm
+          
+      - name: Upload CentOS 9 RPM
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/pingora-slice-el9.rpm/pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el9.x86_64.rpm
+          asset_name: pingora-slice-${{ steps.get_version.outputs.VERSION }}-1.el9.x86_64.rpm
+          asset_content_type: application/x-rpm

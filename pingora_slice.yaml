@@ -1,0 +1,25 @@
+# Pingora Slice Module Configuration
+# Default configuration file for the Pingora Slice server
+
+# Size of each slice in bytes (1MB)
+slice_size: 1048576
+
+# Maximum number of concurrent subrequests
+max_concurrent_subrequests: 4
+
+# Maximum number of retry attempts
+max_retries: 3
+
+# URL patterns for slicing (empty = all requests considered)
+slice_patterns:
+  - "^/large-files/.*"
+  - "^/downloads/.*"
+
+# Enable caching
+enable_cache: true
+
+# Cache TTL in seconds (1 hour)
+cache_ttl: 3600
+
+# Upstream origin server
+upstream_address: "127.0.0.1:8080"
