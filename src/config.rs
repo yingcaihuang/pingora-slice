@@ -33,6 +33,18 @@ pub struct SliceConfig {
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl: u64,
 
+    /// L1 (memory) cache size in bytes (default: 100MB)
+    #[serde(default = "default_l1_cache_size")]
+    pub l1_cache_size_bytes: usize,
+
+    /// L2 (disk) cache directory (default: /var/cache/pingora-slice)
+    #[serde(default = "default_l2_cache_dir")]
+    pub l2_cache_dir: String,
+
+    /// Whether to enable L2 disk cache (default: true)
+    #[serde(default = "default_true")]
+    pub enable_l2_cache: bool,
+
     /// Upstream server address
     #[serde(default = "default_upstream")]
     pub upstream_address: String,
@@ -82,6 +94,14 @@ fn default_true() -> bool {
 
 fn default_cache_ttl() -> u64 {
     3600 // 1 hour
+}
+
+fn default_l1_cache_size() -> usize {
+    100 * 1024 * 1024 // 100MB
+}
+
+fn default_l2_cache_dir() -> String {
+    "/var/cache/pingora-slice".to_string()
 }
 
 fn default_upstream() -> String {

@@ -182,6 +182,7 @@ pub mod request_analyzer;
 pub mod metadata_fetcher;
 pub mod slice_calculator;
 pub mod cache;
+pub mod tiered_cache;  // New two-tier cache implementation
 pub mod subrequest_manager;
 pub mod response_assembler;
 pub mod metrics;
@@ -196,6 +197,7 @@ pub use request_analyzer::RequestAnalyzer;
 pub use metadata_fetcher::MetadataFetcher;
 pub use slice_calculator::SliceCalculator;
 pub use cache::SliceCache;
+pub use tiered_cache::{TieredCache, TieredCacheStats};  // Export new cache
 pub use subrequest_manager::{SubrequestManager, SubrequestResult, RetryPolicy};
 pub use response_assembler::ResponseAssembler;
 pub use metrics::{SliceMetrics, MetricsSnapshot};

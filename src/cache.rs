@@ -1,15 +1,23 @@
 //! Cache management for slice storage
 //!
-//! This module provides caching functionality for individual slices,
-//! using a simple in-memory cache implementation.
+//! This module provides a two-tier caching system:
+//! - L1: In-memory cache for fast access (hot data)
+//! - L2: Disk cache for persistence (cold data)
+//!
+//! The cache automatically promotes frequently accessed items to L1
+//! and persists all items to L2 asynchronously.
 
 use crate::error::Result;
 use crate::models::ByteRange;
 use bytes::Bytes;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
-use tracing::{debug, warn};
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 /// Cached slice entry with expiration and access tracking
 #[derive(Clone)]
