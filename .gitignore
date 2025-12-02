@@ -39,3 +39,11 @@ rpmbuild/
 *.tmp
 *.temp
 .tmp/
+
+# Raw disk cache test files
+my-slice-raw
+*-slice-raw
+*.bak
+
+# Test configuration files
+test_*.yaml

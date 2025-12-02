@@ -1,0 +1,29 @@
+# Pingora Slice Streaming Proxy Configuration
+# Simple file-based cache configuration
+
+# Slice configuration
+slice_size: 1048576  # 1MB
+max_concurrent_subrequests: 4
+max_retries: 3
+slice_patterns:
+  - ".*"
+
+# Cache configuration
+enable_cache: true
+cache_ttl: 3600  # 1 hour
+
+# L1 (memory) cache
+l1_cache_size_bytes: 104857600  # 100MB
+
+# L2 (file-based) cache
+enable_l2_cache: true
+l2_backend: "file"
+l2_cache_dir: "/tmp/streaming-cache"
+
+# Upstream server
+upstream_address: "mirrors.verycloud.cn:80"
+
+# Metrics endpoint
+metrics_endpoint:
+  enabled: true
+  address: "127.0.0.1:9090"

@@ -1,0 +1,72 @@
+# Pingora Slice Configuration with Raw Disk Cache
+#
+# This example shows how to configure the slice module with raw disk cache backend
+# for maximum performance.
+
+# Slice size in bytes (1MB)
+slice_size: 1048576
+
+# Maximum concurrent subrequests
+max_concurrent_subrequests: 4
+
+# Maximum retries for failed subrequests
+max_retries: 3
+
+# Enable caching
+enable_cache: true
+
+# Cache TTL in seconds (1 hour)
+cache_ttl: 3600
+
+# L1 (memory) cache size in bytes (100MB)
+l1_cache_size_bytes: 104857600
+
+# L2 cache backend type: "file" or "raw_disk"
+l2_backend: "raw_disk"
+
+# Raw disk cache configuration (required when l2_backend is "raw_disk")
+raw_disk_cache:
+  # Path to the raw disk cache device/file
+  # This can be a block device (e.g., /dev/sdb) or a regular file
+  device_path: "/var/cache/pingora-slice-raw"
+  
+  # Total size of the raw disk cache in bytes (10GB)
+  total_size: 10737418240
+  
+  # Block size in bytes (4KB)
+  # Should match filesystem block size for optimal performance
+  block_size: 4096
+  
+  # Use O_DIRECT for disk I/O (bypasses OS page cache)
+  # Recommended for dedicated cache devices
+  use_direct_io: true
+  
+  # Enable compression (reduces disk usage)
+  enable_compression: true
+  
+  # Enable prefetching (improves sequential access performance)
+  enable_prefetch: true
+  
+  # Enable zero-copy operations (reduces memory copies)
+  enable_zero_copy: true
+
+# Upstream server address
+upstream_address: "127.0.0.1:8080"
+
+# URL patterns that should enable slicing (regex patterns)
+slice_patterns:
+  - ".*\\.mp4$"
+  - ".*\\.mkv$"
+  - ".*\\.zip$"
+  - ".*\\.tar\\.gz$"
+
+# Metrics endpoint configuration
+metrics_endpoint:
+  enabled: true
+  address: "127.0.0.1:9090"
+
+# Purge configuration
+purge:
+  enabled: true
+  # auth_token: "your-secret-token"  # Optional authentication
+  enable_metrics: true

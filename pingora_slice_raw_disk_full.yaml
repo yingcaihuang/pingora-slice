@@ -1,0 +1,74 @@
+# Pingora Slice Configuration with Raw Disk Cache
+# This example demonstrates all available raw disk cache configuration options
+
+# Slice configuration
+slice_size: 1048576  # 1MB slices
+max_concurrent_subrequests: 4
+max_retries: 3
+
+# URL patterns that should enable slicing (regex patterns)
+slice_patterns:
+  - ".*\\.mp4$"
+  - ".*\\.mkv$"
+  - ".*\\.iso$"
+
+# Cache configuration
+enable_cache: true
+cache_ttl: 3600  # 1 hour
+
+# L1 (memory) cache configuration
+l1_cache_size_bytes: 104857600  # 100MB
+
+# L2 (disk) cache configuration
+enable_l2_cache: true
+l2_backend: "raw_disk"  # Use raw disk cache instead of file-based cache
+l2_cache_dir: "./myslice"  # Not used for raw_disk, but kept for compatibility
+
+# Raw disk cache configuration
+raw_disk_cache:
+  # Path to the raw disk cache device or file
+  # Can be a block device (e.g., /dev/sdb) or a regular file
+  device_path: "./my-slice-raw"
+  
+  # Total size of the raw disk cache in bytes
+  # Must be at least 1MB
+  total_size: 1073741824  # 10GB
+  
+  # Block size in bytes
+  # Must be a power of 2 between 512 bytes and 1MB
+  # Recommended: 4096 (4KB) for most workloads
+  block_size: 4096
+  
+  # Whether to use O_DIRECT for disk I/O
+  # O_DIRECT bypasses the OS page cache for better performance
+  # Recommended: true for production
+  use_direct_io: true
+  
+  # Whether to enable compression
+  # Compresses data before writing to disk to save space
+  # Uses zstd compression algorithm
+  enable_compression: true
+  
+  # Whether to enable prefetching
+  # Automatically prefetches related data based on access patterns
+  # Recommended: true for sequential access patterns
+  enable_prefetch: true
+  
+  # Whether to enable zero-copy operations
+  # Uses mmap and sendfile for efficient data transfer
+  # Recommended: true for large files
+  enable_zero_copy: true
+
+# Upstream server configuration
+upstream_address: "mirrors.verycloud.cn:80"
+
+# Metrics endpoint configuration (optional)
+metrics_endpoint:
+  enabled: true
+  address: "127.0.0.1:9090"
+
+# Purge configuration (optional)
+purge:
+  enabled: true
+  auth_token: "your-secret-token-here"
+  enable_metrics: true

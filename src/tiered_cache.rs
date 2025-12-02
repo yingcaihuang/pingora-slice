@@ -10,9 +10,11 @@
 //! - LRU eviction for L1 when memory limit is reached
 //! - Persistent storage survives restarts
 //! - Configurable cache sizes and TTL
+//! - Support for both file-based and raw disk cache backends
 
 use crate::error::{Result, SliceError};
 use crate::models::ByteRange;
+use crate::raw_disk::RawDiskCache;
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,6 +24,15 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+
+/// L2 cache backend type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum L2Backend {
+    /// File-based cache (traditional filesystem)
+    File,
+    /// Raw disk cache (direct block management)
+    RawDisk,
+}
 
 /// Message for async disk write operations
 #[derive(Debug)]
@@ -76,6 +87,10 @@ pub struct TieredCache {
     // L2: Disk cache
     l2_base_path: PathBuf,
     l2_enabled: bool,
+    l2_backend: L2Backend,
+    
+    // L2 backend implementations
+    raw_disk_cache: Option<Arc<RawDiskCache>>,
     
     // Configuration
     ttl: Duration,
@@ -83,12 +98,12 @@ pub struct TieredCache {
     // Statistics
     stats: Arc<RwLock<TieredCacheStats>>,
     
-    // Async disk writer
+    // Async disk writer (only for file-based backend)
     disk_writer_tx: Option<mpsc::UnboundedSender<DiskWriteMessage>>,
 }
 
 impl TieredCache {
-    /// Create a new two-tier cache
+    /// Create a new two-tier cache with file-based L2
     ///
     /// # Arguments
     /// * `ttl` - Time-to-live for cached items
@@ -99,40 +114,121 @@ impl TieredCache {
         l1_max_size_bytes: usize,
         l2_base_path: impl AsRef<Path>,
     ) -> Result<Self> {
-        let l2_base_path = l2_base_path.as_ref().to_path_buf();
-        
-        // Create L2 directory if it doesn't exist
-        if let Err(e) = fs::create_dir_all(&l2_base_path).await {
-            warn!("Failed to create L2 cache directory: {}", e);
-            return Ok(Self::memory_only(ttl, l1_max_size_bytes));
-        }
+        Self::new_with_backend(ttl, l1_max_size_bytes, l2_base_path, L2Backend::File, None).await
+    }
+
+    /// Create a new two-tier cache with raw disk L2
+    ///
+    /// # Arguments
+    /// * `ttl` - Time-to-live for cached items
+    /// * `l1_max_size_bytes` - Maximum L1 (memory) cache size
+    /// * `device_path` - Path to raw disk cache device/file
+    /// * `total_size` - Total size of raw disk cache
+    /// * `block_size` - Block size for raw disk cache
+    /// * `use_direct_io` - Whether to use O_DIRECT
+    pub async fn new_with_raw_disk(
+        ttl: Duration,
+        l1_max_size_bytes: usize,
+        device_path: impl AsRef<Path>,
+        total_size: u64,
+        block_size: usize,
+        use_direct_io: bool,
+    ) -> Result<Self> {
+        let device_path = device_path.as_ref().to_path_buf();
         
         info!(
-            "Initializing two-tier cache: L1={}MB, L2={:?}",
+            "Initializing two-tier cache with raw disk: L1={}MB, L2=raw_disk({})",
             l1_max_size_bytes / 1024 / 1024,
-            l2_base_path
+            device_path.display()
         );
         
-        // Start async disk writer
-        let (tx, rx) = mpsc::unbounded_channel();
-        let l2_path_clone = l2_base_path.clone();
-        let stats_clone = Arc::new(RwLock::new(TieredCacheStats::default()));
-        let stats_for_writer = stats_clone.clone();
-        
-        tokio::spawn(async move {
-            Self::disk_writer_task(rx, l2_path_clone, stats_for_writer).await;
-        });
+        // Create raw disk cache
+        let raw_disk_cache = RawDiskCache::new_with_options(
+            &device_path,
+            total_size,
+            block_size,
+            ttl,
+            use_direct_io,
+        )
+        .await
+        .map_err(|e| SliceError::CacheError(format!("Failed to create raw disk cache: {}", e)))?;
         
         Ok(TieredCache {
             l1_storage: Arc::new(RwLock::new(HashMap::new())),
             l1_max_size_bytes,
             l1_current_size: Arc::new(RwLock::new(0)),
-            l2_base_path,
+            l2_base_path: device_path,
             l2_enabled: true,
+            l2_backend: L2Backend::RawDisk,
+            raw_disk_cache: Some(Arc::new(raw_disk_cache)),
             ttl,
-            stats: stats_clone,
-            disk_writer_tx: Some(tx),
+            stats: Arc::new(RwLock::new(TieredCacheStats::default())),
+            disk_writer_tx: None,
         })
+    }
+
+    /// Create a new two-tier cache with specified backend
+    async fn new_with_backend(
+        ttl: Duration,
+        l1_max_size_bytes: usize,
+        l2_base_path: impl AsRef<Path>,
+        backend: L2Backend,
+        raw_disk_config: Option<(u64, usize, bool)>, // (total_size, block_size, use_direct_io)
+    ) -> Result<Self> {
+        let l2_base_path = l2_base_path.as_ref().to_path_buf();
+        
+        match backend {
+            L2Backend::File => {
+                // Create L2 directory if it doesn't exist
+                if let Err(e) = fs::create_dir_all(&l2_base_path).await {
+                    warn!("Failed to create L2 cache directory: {}", e);
+                    return Ok(Self::memory_only(ttl, l1_max_size_bytes));
+                }
+                
+                info!(
+                    "Initializing two-tier cache: L1={}MB, L2=file({:?})",
+                    l1_max_size_bytes / 1024 / 1024,
+                    l2_base_path
+                );
+                
+                // Start async disk writer
+                let (tx, rx) = mpsc::unbounded_channel();
+                let l2_path_clone = l2_base_path.clone();
+                let stats_clone = Arc::new(RwLock::new(TieredCacheStats::default()));
+                let stats_for_writer = stats_clone.clone();
+                
+                tokio::spawn(async move {
+                    Self::disk_writer_task(rx, l2_path_clone, stats_for_writer).await;
+                });
+                
+                Ok(TieredCache {
+                    l1_storage: Arc::new(RwLock::new(HashMap::new())),
+                    l1_max_size_bytes,
+                    l1_current_size: Arc::new(RwLock::new(0)),
+                    l2_base_path,
+                    l2_enabled: true,
+                    l2_backend: L2Backend::File,
+                    raw_disk_cache: None,
+                    ttl,
+                    stats: stats_clone,
+                    disk_writer_tx: Some(tx),
+                })
+            }
+            L2Backend::RawDisk => {
+                let (total_size, block_size, use_direct_io) = raw_disk_config
+                    .ok_or_else(|| SliceError::CacheError("Raw disk config required".to_string()))?;
+                
+                Self::new_with_raw_disk(
+                    ttl,
+                    l1_max_size_bytes,
+                    l2_base_path,
+                    total_size,
+                    block_size,
+                    use_direct_io,
+                )
+                .await
+            }
+        }
     }
     
     /// Create a memory-only cache (L2 disabled)
@@ -145,6 +241,8 @@ impl TieredCache {
             l1_current_size: Arc::new(RwLock::new(0)),
             l2_base_path: PathBuf::new(),
             l2_enabled: false,
+            l2_backend: L2Backend::File,
+            raw_disk_cache: None,
             ttl,
             stats: Arc::new(RwLock::new(TieredCacheStats::default())),
             disk_writer_tx: None,
@@ -217,12 +315,26 @@ impl TieredCache {
         
         // Async store in L2
         if self.l2_enabled {
-            if let Some(tx) = &self.disk_writer_tx {
-                let _ = tx.send(DiskWriteMessage::Write {
-                    key,
-                    data,
-                    expires_at,
-                });
+            match self.l2_backend {
+                L2Backend::File => {
+                    if let Some(tx) = &self.disk_writer_tx {
+                        let _ = tx.send(DiskWriteMessage::Write {
+                            key,
+                            data,
+                            expires_at,
+                        });
+                    }
+                }
+                L2Backend::RawDisk => {
+                    if let Some(raw_disk) = &self.raw_disk_cache {
+                        let raw_disk = raw_disk.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = raw_disk.store(&key, data).await {
+                                error!("Failed to store in raw disk cache: {}", e);
+                            }
+                        });
+                    }
+                }
             }
         }
         
@@ -276,6 +388,14 @@ impl TieredCache {
     
     /// Lookup in L2 disk cache
     async fn lookup_l2(&self, key: &str) -> Result<Option<Bytes>> {
+        match self.l2_backend {
+            L2Backend::File => self.lookup_l2_file(key).await,
+            L2Backend::RawDisk => self.lookup_l2_raw_disk(key).await,
+        }
+    }
+
+    /// Lookup in L2 file-based cache
+    async fn lookup_l2_file(&self, key: &str) -> Result<Option<Bytes>> {
         let file_path = self.get_l2_file_path(key);
         
         match fs::read(&file_path).await {
@@ -300,6 +420,21 @@ impl TieredCache {
                 Ok(Some(Bytes::from(data[8..].to_vec())))
             }
             Err(_) => Ok(None),
+        }
+    }
+
+    /// Lookup in L2 raw disk cache
+    async fn lookup_l2_raw_disk(&self, key: &str) -> Result<Option<Bytes>> {
+        if let Some(raw_disk) = &self.raw_disk_cache {
+            match raw_disk.lookup(key).await {
+                Ok(data) => Ok(data),
+                Err(e) => {
+                    warn!("Raw disk cache lookup error: {}", e);
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
         }
     }
     
@@ -469,8 +604,23 @@ impl TieredCache {
         
         // Remove from L2 (async)
         if self.l2_enabled {
-            if let Some(tx) = &self.disk_writer_tx {
-                let _ = tx.send(DiskWriteMessage::Delete { key: key.clone() });
+            match self.l2_backend {
+                L2Backend::File => {
+                    if let Some(tx) = &self.disk_writer_tx {
+                        let _ = tx.send(DiskWriteMessage::Delete { key: key.clone() });
+                    }
+                }
+                L2Backend::RawDisk => {
+                    if let Some(raw_disk) = &self.raw_disk_cache {
+                        let raw_disk = raw_disk.clone();
+                        let key_clone = key.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = raw_disk.remove(&key_clone).await {
+                                warn!("Failed to remove from raw disk cache: {}", e);
+                            }
+                        });
+                    }
+                }
             }
         }
         
@@ -517,9 +667,25 @@ impl TieredCache {
         
         // Remove from L2 (async)
         if self.l2_enabled {
-            if let Some(tx) = &self.disk_writer_tx {
-                for key in keys_to_remove {
-                    let _ = tx.send(DiskWriteMessage::Delete { key });
+            match self.l2_backend {
+                L2Backend::File => {
+                    if let Some(tx) = &self.disk_writer_tx {
+                        for key in keys_to_remove {
+                            let _ = tx.send(DiskWriteMessage::Delete { key });
+                        }
+                    }
+                }
+                L2Backend::RawDisk => {
+                    if let Some(raw_disk) = &self.raw_disk_cache {
+                        let raw_disk = raw_disk.clone();
+                        tokio::spawn(async move {
+                            for key in keys_to_remove {
+                                if let Err(e) = raw_disk.remove(&key).await {
+                                    warn!("Failed to remove from raw disk cache: {}", e);
+                                }
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -551,9 +717,25 @@ impl TieredCache {
         
         // Remove from L2 (async)
         if self.l2_enabled {
-            if let Some(tx) = &self.disk_writer_tx {
-                for key in all_keys {
-                    let _ = tx.send(DiskWriteMessage::Delete { key });
+            match self.l2_backend {
+                L2Backend::File => {
+                    if let Some(tx) = &self.disk_writer_tx {
+                        for key in all_keys {
+                            let _ = tx.send(DiskWriteMessage::Delete { key });
+                        }
+                    }
+                }
+                L2Backend::RawDisk => {
+                    if let Some(raw_disk) = &self.raw_disk_cache {
+                        let raw_disk = raw_disk.clone();
+                        tokio::spawn(async move {
+                            for key in all_keys {
+                                if let Err(e) = raw_disk.remove(&key).await {
+                                    warn!("Failed to remove from raw disk cache: {}", e);
+                                }
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -561,13 +743,45 @@ impl TieredCache {
         info!("Purged all cache entries: {} total", purged_count);
         Ok(purged_count)
     }
+
+    /// Get the L2 backend type
+    pub fn l2_backend(&self) -> L2Backend {
+        self.l2_backend
+    }
+
+    /// Get raw disk cache statistics (if using raw disk backend)
+    pub async fn raw_disk_stats(&self) -> Option<crate::raw_disk::CacheStats> {
+        if let Some(raw_disk) = &self.raw_disk_cache {
+            Some(raw_disk.stats().await)
+        } else {
+            None
+        }
+    }
 }
 
 impl Drop for TieredCache {
     fn drop(&mut self) {
-        // Send shutdown signal to disk writer
+        // Send shutdown signal to disk writer (file backend only)
         if let Some(tx) = &self.disk_writer_tx {
             let _ = tx.send(DiskWriteMessage::Shutdown);
+        }
+        
+        // For raw disk backend, save metadata on shutdown
+        if self.l2_backend == L2Backend::RawDisk {
+            if let Some(raw_disk) = &self.raw_disk_cache {
+                let raw_disk = raw_disk.clone();
+                // Spawn a blocking task to save metadata
+                let _ = std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async {
+                        if let Err(e) = raw_disk.save_metadata().await {
+                            error!("Failed to save raw disk cache metadata on shutdown: {}", e);
+                        } else {
+                            info!("Saved raw disk cache metadata on shutdown");
+                        }
+                    });
+                }).join();
+            }
         }
         
         info!("TieredCache dropped");

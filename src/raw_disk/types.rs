@@ -10,12 +10,12 @@ pub const MAGIC_NUMBER: u32 = 0x50494E47; // "PING"
 pub const VERSION: u32 = 1;
 
 /// Disk location information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DiskLocation {
     /// Offset in bytes from start of disk
     pub offset: u64,
     
-    /// Size of data in bytes
+    /// Size of data in bytes (after compression if compressed)
     pub size: u32,
     
     /// CRC32 checksum
@@ -23,6 +23,14 @@ pub struct DiskLocation {
     
     /// Unix timestamp
     pub timestamp: u64,
+    
+    /// Whether data is compressed
+    #[serde(default)]
+    pub compressed: bool,
+    
+    /// Original size before compression (0 if not compressed)
+    #[serde(default)]
+    pub original_size: u32,
 }
 
 impl DiskLocation {
@@ -42,6 +50,29 @@ impl DiskLocation {
             size: data.len() as u32,
             checksum,
             timestamp,
+            compressed: false,
+            original_size: 0,
+        }
+    }
+    
+    /// Create a new disk location with compression info
+    pub fn new_compressed(offset: u64, data: &[u8], original_size: u32) -> Self {
+        let mut hasher = Hasher::new();
+        hasher.update(data);
+        let checksum = hasher.finalize();
+        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        Self {
+            offset,
+            size: data.len() as u32,
+            checksum,
+            timestamp,
+            compressed: true,
+            original_size,
         }
     }
     
@@ -54,6 +85,11 @@ impl DiskLocation {
     
     /// Check if entry is expired
     pub fn is_expired(&self, ttl_secs: u64) -> bool {
+        // TTL of 0 means no expiration
+        if ttl_secs == 0 {
+            return false;
+        }
+        
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

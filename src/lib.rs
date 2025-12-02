@@ -185,11 +185,14 @@ pub mod cache;
 pub mod tiered_cache;  // New two-tier cache implementation
 pub mod purge_handler;  // HTTP PURGE method handler
 pub mod purge_metrics;  // Prometheus metrics for purge operations
+pub mod raw_disk;  // Raw disk cache implementation
 pub mod subrequest_manager;
 pub mod response_assembler;
 pub mod metrics;
 pub mod metrics_endpoint;
 pub mod proxy;
+pub mod streaming_proxy;  // Pingora streaming proxy implementation
+pub mod health_check;  // Health check endpoint
 
 // Re-export commonly used types
 pub use config::SliceConfig;
@@ -205,3 +208,5 @@ pub use response_assembler::ResponseAssembler;
 pub use metrics::{SliceMetrics, MetricsSnapshot};
 pub use metrics_endpoint::MetricsEndpoint;
 pub use proxy::{SliceProxy, SliceContext};
+pub use streaming_proxy::{StreamingProxy, ProxyContext};
+pub use health_check::{HealthCheckService, HealthStatus};
